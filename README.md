@@ -1,4 +1,6 @@
 # SGC Billing — Sri Ganapathi Colours
+<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/07d6ebf3-6530-462f-a97b-07c2a78eacd0" />
+
 ## Electron Desktop App — Setup Guide
 
 ---
