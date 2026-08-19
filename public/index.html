@@ -3,63 +3,130 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>SGC Billing</title>
+<title>SGC Billing — Sri Ganapathi Colours</title>
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0c0c14; color: #ede5d0; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #0c0c14; color: #ede5d0; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: rgba(255,255,255,0.03); }
   ::-webkit-scrollbar-thumb { background: rgba(255,200,74,0.3); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,200,74,0.5); }
   input[type=number]::-webkit-inner-spin-button { opacity: 0.4; }
   @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
   @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-  .fade-in { animation: fadeIn 0.25s ease; }
+  .fade-in { animation: fadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+  .btn-hover:hover { filter: brightness(1.15); transform: translateY(-1px); }
+  .btn-hover:active { transform: translateY(0); }
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
-// ── ELECTRON BRIDGE ──────────────────────────────────────────────────────────
+// ── ELECTRON / BROWSER BRIDGE ────────────────────────────────────────────────
+const isElectron = !!window.electronAPI;
 const api = window.electronAPI || {
   storeGet: async (k) => { try { const r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } catch { return null; } },
   storeSet: async (k, v) => { localStorage.setItem(k, JSON.stringify(v)); },
-  saveAndUploadBill: async () => ({ success: false, error: 'Electron not running' }),
-  googleAuthStart: async () => ({ success: false, error: 'Electron not running' }),
-  googleAuthExchange: async () => ({ success: false, error: 'Electron not running' }),
+  saveAndUploadBill: async ({ billData }) => ({ success: true, browserSaved: true, message: 'Saved in local storage' }),
+  saveLocalPdf: async ({ billData, htmlContent }) => {
+    const printWin = window.open('', '_blank', 'width=900,height=800');
+    if (printWin) {
+      printWin.document.open();
+      printWin.document.write(htmlContent);
+      printWin.document.close();
+      setTimeout(() => { printWin.focus(); printWin.print(); }, 300);
+      return { success: true };
+    }
+    return { success: false, error: 'Popup blocked' };
+  },
+  exportFile: async ({ defaultName, content, extension }) => {
+    const blob = new Blob([content], { type: extension === 'json' ? 'application/json' : 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = defaultName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return { success: true };
+  },
+  importFile: async () => {
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return resolve({ success: false, canceled: true });
+        try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          resolve({ success: true, data, fileName: file.name });
+        } catch (err) {
+          resolve({ success: false, error: err.message });
+        }
+      };
+      input.click();
+    });
+  },
+  googleAuthStart: async () => ({ success: false, error: 'Google Drive sync is available in Electron Desktop app' }),
+  googleAuthExchange: async () => ({ success: false, error: 'Google Drive sync is available in Electron Desktop app' }),
   googleAuthStatus: async () => ({ connected: false }),
   googleAuthDisconnect: async () => ({ success: true }),
   openExternal: async (url) => window.open(url, '_blank'),
-  printBill: async () => {},
+  printBill: async (html) => {
+    const printWin = window.open('', '_blank', 'width=900,height=800');
+    if (printWin) {
+      printWin.document.open();
+      printWin.document.write(html);
+      printWin.document.close();
+      setTimeout(() => { printWin.focus(); printWin.print(); }, 300);
+    }
+  },
 };
 
-// ── CONSTANTS ─────────────────────────────────────────────────────────────────
+// ── CONSTANTS & DEFAULTS ──────────────────────────────────────────────────────
+const DEFAULT_COMPANY = {
+  name: "SRI GANAPATHI COLOURS",
+  address: "# 14/1, P.Vellalapatti, Puliyur (P.o), Karur - 639114.",
+  contact: "Tamilnadu. Cell : 9655527062",
+  gstin: "33HKSPS1735K1ZH",
+  hsn: "9988",
+  bankName: "CSB BANK",
+  accountNo: "003204157368195001",
+  ifsc: "CSBK0000032",
+  title: "DYEING COOLIE CHARGES",
+  jurisdiction: "KARUR",
+};
+
 const DEFAULT_CUSTOMERS = [
-  { name: "SRI GANAPATHI COLOURS", gst: "33HKSPS1735K1ZH" },
-  { name: "GAIA SUSTAINABLE SOLUTION", gst: "33AAJCG6975A1ZMT" },
-  { name: "Unity Exports", gst: "33AAAFU1548H1ZE" },
-  { name: "AMSA EXPORTS", gst: "33AAJFA6773F1ZG" },
-  { name: "Sowbhagiya Home Textiles", gst: "33AGSPR4149P1ZI" },
-  { name: "M.S.K Fabrics", gst: "33AAVFM9953BIZW" },
-  { name: "Sri Laxmi Export", gst: "33ABDPL8401A1ZD" },
-  { name: "Manish Tex", gst: "33AGOPM0847R1ZQ" },
-  { name: "Malaiyamman Fabrics", gst: "33AAAFM8631K1Z9" },
-  { name: "Saravana Traders", gst: "33BLLPS9068M2Z5" },
-  { name: "Priya Handlooms", gst: "33AAAFP7151M1Z5" },
-  { name: "Varniga Tex", gst: "33AAFFV6534P1ZN" },
-  { name: "Ambara Export", gst: "33AAGFA9337C1ZR" },
-  { name: "SRI ATHI SAKTHI FABRICS", gst: "33BGVPG9584P2Z7" },
-  { name: "Rameshwari Fabrics", gst: "33CYTPS7400P1ZL" },
-  { name: "Marvel Fabrics", gst: "33AAYFM6520D1Z8" },
-  { name: "Ponni Fab", gst: "33AFXPK0365A1ZN" },
-  { name: "Airwill Home Collections Private Limited", gst: "33AANCA6820E1ZW" },
-  { name: "Om Sakthi A Tex", gst: "33AAAFO8650J1Z6" },
-  { name: "Metro Fabrics", gst: "33AAAFM5247P1Z1" },
-  { name: "M/s GAIA Sustainable Solution Pvt Ltd", gst: "33AAJTC6985A1HJ" },
+  { name: "SRI GANAPATHI COLOURS", gst: "33HKSPS1735K1ZH", phone: "9655527062" },
+  { name: "GAIA SUSTAINABLE SOLUTION", gst: "33AAJCG6975A1ZMT", phone: "" },
+  { name: "Unity Exports", gst: "33AAAFU1548H1ZE", phone: "" },
+  { name: "AMSA EXPORTS", gst: "33AAJFA6773F1ZG", phone: "" },
+  { name: "Sowbhagiya Home Textiles", gst: "33AGSPR4149P1ZI", phone: "" },
+  { name: "M.S.K Fabrics", gst: "33AAVFM9953BIZW", phone: "" },
+  { name: "Sri Laxmi Export", gst: "33ABDPL8401A1ZD", phone: "" },
+  { name: "Manish Tex", gst: "33AGOPM0847R1ZQ", phone: "" },
+  { name: "Malaiyamman Fabrics", gst: "33AAAFM8631K1Z9", phone: "" },
+  { name: "Saravana Traders", gst: "33BLLPS9068M2Z5", phone: "" },
+  { name: "Priya Handlooms", gst: "33AAAFP7151M1Z5", phone: "" },
+  { name: "Varniga Tex", gst: "33AAFFV6534P1ZN", phone: "" },
+  { name: "Ambara Export", gst: "33AAGFA9337C1ZR", phone: "" },
+  { name: "SRI ATHI SAKTHI FABRICS", gst: "33BGVPG9584P2Z7", phone: "" },
+  { name: "Rameshwari Fabrics", gst: "33CYTPS7400P1ZL", phone: "" },
+  { name: "Marvel Fabrics", gst: "33AAYFM6520D1Z8", phone: "" },
+  { name: "Ponni Fab", gst: "33AFXPK0365A1ZN", phone: "" },
+  { name: "Airwill Home Collections Private Limited", gst: "33AANCA6820E1ZW", phone: "" },
+  { name: "Om Sakthi A Tex", gst: "33AAAFO8650J1Z6", phone: "" },
+  { name: "Metro Fabrics", gst: "33AAAFM5247P1Z1", phone: "" },
+  { name: "M/s GAIA Sustainable Solution Pvt Ltd", gst: "33AAJTC6985A1HJ", phone: "" },
 ].map((c, i) => ({ ...c, id: `default-${i}` }));
 
 const DEFAULT_COUNT_MAP = [
@@ -69,11 +136,19 @@ const DEFAULT_COUNT_MAP = [
   { id: "cm4", count: "30s", kazhi: 15 },
 ];
 
+const COMMON_VARIETIES = [
+  "Cotton Yarn", "Viscose Yarn", "Micro Modal", "Cotton 100%",
+  "Poly Cotton", "Linen Blend", "Slub Yarn", "Grey Yarn",
+  "Melange Yarn", "Compact Yarn", "Bamboo Cotton", "Carded Yarn", "Combed Yarn", "Modal Yarn"
+];
+
+const COMMON_COUNTS = ["10s", "12s", "16s", "17s", "20s", "24s", "30s", "34s", "40s", "60s", "2/20s", "2/30s", "2/40s"];
+
 // ── HELPERS ──────────────────────────────────────────────────────────────────
-const uid    = () => Math.random().toString(36).slice(2, 9);
+const uid    = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
 const today  = () => new Date().toISOString().slice(0, 10);
 const fmt    = (n) => Number(n || 0).toFixed(2);
-const fmtINR = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+const fmtINR = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 function numWords(n) {
   const a = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
@@ -96,7 +171,7 @@ function calcAmount(kattu, kazhi, rate, count, countMap) {
   if (k === 0) return kz * r;
   if (kz === 0) return k * r;
   const countKey = (count || '').toString().trim().toLowerCase();
-  const mapping  = countMap.find(m => m.count.toLowerCase() === countKey);
+  const mapping  = (countMap || DEFAULT_COUNT_MAP).find(m => m.count.toLowerCase() === countKey);
   if (!mapping || !Number(mapping.kazhi)) return k * r + kz * r;
   return (k * r) + (kz * (r / Number(mapping.kazhi)));
 }
@@ -116,8 +191,26 @@ function autoFormatCount(raw) {
   return v;
 }
 
-// ── GENERATE BILL HTML ───────────────────────────────────────────────────────
-function generateBillHTML(bill) {
+function getBillFinancials(bill) {
+  const net = Number(bill.netAmount || 0);
+  let totalPaid = 0;
+  if (bill.payments && Array.isArray(bill.payments) && bill.payments.length > 0) {
+    totalPaid = bill.payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+  } else if (bill.status === 'paid') {
+    totalPaid = net;
+  }
+  const balance = Math.max(0, net - totalPaid);
+  let computedStatus = 'pending';
+  if (totalPaid >= net && net > 0) {
+    computedStatus = 'paid';
+  } else if (totalPaid > 0) {
+    computedStatus = 'partial';
+  }
+  return { totalPaid, balance, computedStatus };
+}
+
+// ── GENERATE BILL HTML (OFFICIAL SGC TEMPLATE) ────────────────────────────────
+function generateBillHTML(bill, company = DEFAULT_COMPANY) {
   const resolved = (bill.items || []).map((it, idx) => ({
     ...it,
     _delNo: getEffective(bill.items, idx, 'delNo'),
@@ -148,15 +241,19 @@ function generateBillHTML(bill) {
     .map(() => `<tr>${Array(9).fill('<td style="border:1px solid #bbd;height:22px">&nbsp;</td>').join('')}</tr>`)
     .join('');
 
-  const paidLine = bill.status === 'paid'
-    ? `<div style="font-size:11px;color:#1a6b2a;margin-top:6px;font-weight:bold">✓ PAID — ${bill.paidDate||''} | Ref: ${bill.receiptNo||''}</div>`
-    : '';
+  const fin = getBillFinancials(bill);
+  let paidLine = '';
+  if (fin.computedStatus === 'paid') {
+    paidLine = `<div style="font-size:11px;color:#1a6b2a;margin-top:6px;font-weight:bold">✓ PAID IN FULL — ${bill.paidDate||'Completed'} | Ref: ${bill.receiptNo||'Received'}</div>`;
+  } else if (fin.computedStatus === 'partial') {
+    paidLine = `<div style="font-size:11px;color:#c05621;margin-top:6px;font-weight:bold">● PARTIALLY PAID: ₹${fin.totalPaid.toFixed(2)} | Balance Due: ₹${fin.balance.toFixed(2)}</div>`;
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<title>Bill #${bill.billNo}</title>
+<title>Bill #${bill.billNo} — ${bill.customer||'Customer'}</title>
 <style>
   * { box-sizing:border-box; margin:0; padding:0; }
   body { font-family:'Times New Roman',serif; font-size:12px; background:#fff; color:#000; }
@@ -171,10 +268,10 @@ function generateBillHTML(bill) {
 <div class="bill-wrap">
   <table style="width:100%;border-collapse:collapse"><tbody><tr>
     <td style="padding:10px 14px;vertical-align:top;width:62%">
-      <div style="font-size:22px;font-weight:bold;letter-spacing:1px;color:#1a3a6b">SRI GANAPATHI COLOURS</div>
-      <div style="font-size:11.5px;margin-top:3px"># 14/1, P.Vellalapatti, Puliyur (P.o), Karur - 639114.</div>
-      <div style="font-size:11.5px">Tamilnadu. Cell : <b>9655527062</b></div>
-      <div style="font-size:11.5px;margin-top:2px"><b>GSTIN : 33HKSPS1735K1ZH</b>&nbsp;&nbsp;<b>HSN / SAC : 9988</b></div>
+      <div style="font-size:22px;font-weight:bold;letter-spacing:1px;color:#1a3a6b">${company.name||'SRI GANAPATHI COLOURS'}</div>
+      <div style="font-size:11.5px;margin-top:3px">${company.address||'# 14/1, P.Vellalapatti, Puliyur (P.o), Karur - 639114.'}</div>
+      <div style="font-size:11.5px">${company.contact||'Tamilnadu. Cell : <b>9655527062</b>'}</div>
+      <div style="font-size:11.5px;margin-top:2px"><b>GSTIN : ${company.gstin||'33HKSPS1735K1ZH'}</b>&nbsp;&nbsp;<b>HSN / SAC : ${company.hsn||'9988'}</b></div>
     </td>
     <td style="padding:10px 14px;vertical-align:top;text-align:center;border-left:2px solid #1a3a6b">
       <div style="background:#1a3a6b;color:#fff;font-weight:bold;font-size:12px;letter-spacing:2px;padding:5px 8px;margin-bottom:8px">GST TAX INVOICE</div>
@@ -184,11 +281,11 @@ function generateBillHTML(bill) {
       </tbody></table>
     </td>
   </tr></tbody></table>
-  <div style="text-align:center;background:#1a3a6b;color:#fff;font-weight:bold;letter-spacing:3px;font-size:12px;padding:5px;border-top:2px solid #1a3a6b;border-bottom:2px solid #1a3a6b">DYEING COOLIE CHARGES</div>
+  <div style="text-align:center;background:#1a3a6b;color:#fff;font-weight:bold;letter-spacing:3px;font-size:12px;padding:5px;border-top:2px solid #1a3a6b;border-bottom:2px solid #1a3a6b">${company.title||'DYEING COOLIE CHARGES'}</div>
   <div style="padding:8px 14px;border-bottom:1px solid #1a3a6b">
     <div style="display:flex;align-items:baseline;gap:4px">
       <span style="font-weight:bold">M/s.</span>
-      <span style="flex:1;border-bottom:1px solid #999;padding-left:4px">${bill.customer}</span>
+      <span style="flex:1;border-bottom:1px solid #999;padding-left:4px">${bill.customer||''}</span>
     </div>
     <div style="margin-top:6px;display:flex;align-items:baseline;gap:4px">
       <span style="font-weight:bold">Party GST</span>
@@ -214,8 +311,8 @@ function generateBillHTML(bill) {
       <div style="font-size:12px;margin-bottom:6px"><b>Rupees</b> ${numWords(net)} Only</div>
       ${paidLine}
       <div style="margin-top:10px;font-size:11px">
-        <b>Bank Details :</b><br/><b>CSB BANK</b><br/>
-        A/c No. : 003204157368195001<br/>IFSC : CSBK0000032
+        <b>Bank Details :</b><br/><b>${company.bankName||'CSB BANK'}</b><br/>
+        A/c No. : ${company.accountNo||'003204157368195001'}<br/>IFSC : ${company.ifsc||'CSBK0000032'}
       </div>
     </td>
     <td style="padding:0;vertical-align:top">
@@ -228,7 +325,7 @@ function generateBillHTML(bill) {
           <td style="border:1px solid #bbd;padding:6px 10px;font-size:13px">NET AMOUNT</td>
           <td style="border:1px solid #bbd;padding:6px 10px;text-align:right;font-size:14px">${fmt(net)}</td>
         </tr>
-        <tr><td colspan="2" style="border:1px solid #bbd;padding:6px 10px;text-align:right;font-size:11px;font-weight:bold;color:#1a3a6b">For SRI GANAPATHY COLOURS</td></tr>
+        <tr><td colspan="2" style="border:1px solid #bbd;padding:6px 10px;text-align:right;font-size:11px;font-weight:bold;color:#1a3a6b">For ${company.name||'SRI GANAPATHY COLOURS'}</td></tr>
         <tr><td colspan="2" style="border:1px solid #bbd;padding:16px 16px 10px;text-align:right">
           <svg width="110" height="44" viewBox="0 0 140 55" xmlns="http://www.w3.org/2000/svg" style="display:block;margin-left:auto">
             <path d="M8,42 C8,38 9,30 10,26 C11,22 12,20 13,22 C14,24 15,28 16,32 C17,36 18,38 19,36 C20,34 21,30 22,26 C23,22 24,20 25,22 C26,26 27,34 27,42" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
@@ -248,103 +345,259 @@ function generateBillHTML(bill) {
     </td>
   </tr></tbody></table>
   <div style="padding:6px 14px;border-top:1px solid #1a3a6b;font-size:10.5px;color:#333">
-    <b>Declaration :</b> 1. All disputes under this sale subject to KARUR jurisdiction
+    <b>Declaration :</b> 1. All disputes under this sale subject to ${company.jurisdiction||'KARUR'} jurisdiction
   </div>
 </div>
 </body>
 </html>`;
 }
 
-// ── STYLES ───────────────────────────────────────────────────────────────────
-const C = {
-  bg:'#0c0c14', surface:'rgba(255,255,255,0.04)', border:'rgba(255,210,80,0.18)',
-  gold:'#ffc84a', text:'#ede5d0', muted:'rgba(237,229,208,0.45)',
-  green:'#4ed97a', red:'#ff6b6b', blue:'#7bc8ff', purple:'#b39ddb', drive:'#34a853',
-};
-const S = {
-  app: { fontFamily:"'Segoe UI',system-ui,sans-serif", minHeight:'100vh', background:C.bg, color:C.text },
-  nav: { background:'rgba(8,8,16,0.97)', borderBottom:`1px solid ${C.border}`, padding:'0 20px', display:'flex', alignItems:'center', gap:4, position:'sticky', top:0, zIndex:50, flexWrap:'wrap' },
-  navBrand: { fontSize:12, fontWeight:700, color:C.gold, letterSpacing:3, textTransform:'uppercase', padding:'14px 0', marginRight:20 },
-  navTab: (a) => ({ padding:'14px 11px', fontSize:10, letterSpacing:1.5, textTransform:'uppercase', cursor:'pointer', color:a?C.gold:C.muted, background:'none', border:'none', borderBottom:`2px solid ${a?C.gold:'transparent'}`, fontFamily:'inherit', transition:'color 0.15s' }),
-  main: { padding:'24px', maxWidth:1280, margin:'0 auto' },
-  card: (accent='#ffc84a') => ({ background:C.surface, border:`1px solid ${accent}28`, borderRadius:12, padding:'18px 22px' }),
-  section: { background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:'22px', marginBottom:18 },
-  secTitle: { fontSize:10, letterSpacing:4, textTransform:'uppercase', color:C.gold, marginBottom:18 },
-  label: { fontSize:10, letterSpacing:2, textTransform:'uppercase', color:C.muted, marginBottom:5, display:'block' },
-  input: { background:'rgba(255,255,255,0.05)', border:`1px solid ${C.border}`, borderRadius:8, padding:'9px 12px', color:C.text, fontSize:13, width:'100%', fontFamily:'inherit', outline:'none', boxSizing:'border-box' },
-  btn: (v) => ({ padding:'9px 20px', borderRadius:8, fontSize:11, letterSpacing:1.5, textTransform:'uppercase', cursor:'pointer', fontFamily:'inherit', fontWeight:600, transition:'all 0.15s',
-    ...(v==='primary' ? { background:C.gold, border:'none', color:'#0c0c14' }
-      : v==='success'  ? { background:'rgba(78,217,122,0.15)', border:'1px solid rgba(78,217,122,0.35)', color:C.green }
-      : v==='danger'   ? { background:'rgba(255,107,107,0.12)', border:'1px solid rgba(255,107,107,0.35)', color:C.red }
-      : v==='drive'    ? { background:'rgba(52,168,83,0.15)', border:'1px solid rgba(52,168,83,0.4)', color:C.drive }
-      : v==='blue'     ? { background:'rgba(123,200,255,0.15)', border:'1px solid rgba(123,200,255,0.35)', color:C.blue }
-      : { background:'rgba(255,255,255,0.05)', border:`1px solid ${C.border}`, color:C.gold }) }),
-  th: { padding:'9px 10px', textAlign:'left', fontSize:10, letterSpacing:2, textTransform:'uppercase', color:C.muted, borderBottom:`1px solid ${C.border}` },
-  td: { padding:'11px 10px', borderBottom:'1px solid rgba(255,255,255,0.04)', verticalAlign:'middle', fontSize:13 },
-  badge: (c) => ({ display:'inline-block', padding:'3px 9px', borderRadius:20, fontSize:11, fontWeight:600,
-    ...(c==='green'  ? { background:'rgba(78,217,122,0.15)',  color:C.green,  border:'1px solid rgba(78,217,122,0.3)' }
-      : c==='orange' ? { background:'rgba(255,168,30,0.15)',  color:'#ffaa44', border:'1px solid rgba(255,168,30,0.3)' }
-      : c==='drive'  ? { background:'rgba(52,168,83,0.12)',   color:C.drive,  border:'1px solid rgba(52,168,83,0.3)' }
-      : { background:'rgba(255,107,107,0.12)', color:C.red, border:'1px solid rgba(255,107,107,0.3)' }) }),
-};
+// ── GENERATE CUSTOMER STATEMENT HTML ─────────────────────────────────────────
+function generateCustomerStatementHTML(customer, customerBills, company = DEFAULT_COMPANY) {
+  const sorted = [...customerBills].sort((a,b) => new Date(a.date) - new Date(b.date));
+  let runningBalance = 0;
+  const rows = sorted.map((b, idx) => {
+    const fin = getBillFinancials(b);
+    runningBalance += (fin.balance);
+    return `
+      <tr style="background:${idx%2===0?'#fff':'#f5f9ff'}">
+        <td style="border:1px solid #ccd;padding:6px 8px;text-align:center">${idx+1}</td>
+        <td style="border:1px solid #ccd;padding:6px 8px;text-align:center">${b.date}</td>
+        <td style="border:1px solid #ccd;padding:6px 8px;font-weight:bold;text-align:center">#${b.billNo}</td>
+        <td style="border:1px solid #ccd;padding:6px 8px;text-align:right">${fmtINR(b.netAmount)}</td>
+        <td style="border:1px solid #ccd;padding:6px 8px;text-align:right;color:#1a6b2a">${fmtINR(fin.totalPaid)}</td>
+        <td style="border:1px solid #ccd;padding:6px 8px;text-align:right;font-weight:bold;color:#c0392b">${fmtINR(fin.balance)}</td>
+        <td style="border:1px solid #ccd;padding:6px 8px;text-align:center;font-size:11px">${fin.computedStatus.toUpperCase()}</td>
+      </tr>
+    `;
+  }).join('');
 
-// ── PAYMENT MODAL ────────────────────────────────────────────────────────────
-function PaymentModal({ bill, onConfirm, onCancel }) {
-  const [receiptNo, setReceiptNo] = useState(`RCP-${bill.billNo}-${Date.now().toString().slice(-4)}`);
-  const [paidDate, setPaidDate]   = useState(today());
-  return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', zIndex:300, display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <div style={{ background:'#13131f', border:'1px solid rgba(78,217,122,0.3)', borderRadius:16, padding:32, width:380, textAlign:'center' }}>
-        <div style={{ fontSize:32, marginBottom:12 }}>✅</div>
-        <div style={{ fontSize:18, fontWeight:700, color:C.text, marginBottom:6 }}>Mark as Paid?</div>
-        <div style={{ fontSize:13, color:C.muted, marginBottom:20 }}>Bill #{bill.billNo} — {bill.customer}</div>
-        <div style={{ textAlign:'left', marginBottom:14 }}>
-          <label style={S.label}>Payment Date</label>
-          <input style={S.input} type="date" value={paidDate} onChange={e=>setPaidDate(e.target.value)} />
-        </div>
-        <div style={{ textAlign:'left', marginBottom:24 }}>
-          <label style={S.label}>Receipt / Reference Number</label>
-          <input style={S.input} value={receiptNo} onChange={e=>setReceiptNo(e.target.value)} />
-        </div>
-        <div style={{ display:'flex', gap:10 }}>
-          <button style={{ ...S.btn(), flex:1 }} onClick={onCancel}>Cancel</button>
-          <button style={{ ...S.btn('success'), flex:1 }} onClick={()=>onConfirm(paidDate, receiptNo)}>✓ Confirm Paid</button>
-        </div>
-      </div>
+  const totalBilled = customerBills.reduce((s,b)=>s+Number(b.netAmount||0),0);
+  const totalPaid   = customerBills.reduce((s,b)=>s+getBillFinancials(b).totalPaid,0);
+  const netDue      = Math.max(0, totalBilled - totalPaid);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Statement — ${customer.name}</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Segoe UI',sans-serif; font-size:12px; background:#fff; color:#111; padding:20px; }
+  .statement-wrap { max-width:820px; margin:0 auto; border:2px solid #1a3a6b; padding:20px; }
+  table { width:100%; border-collapse:collapse; margin-top:16px; font-size:12px; }
+  th { background:#1a3a6b; color:#fff; padding:8px; border:1px solid #1a3a6b; font-size:11px; text-transform:uppercase; }
+</style>
+</head>
+<body>
+<div class="statement-wrap">
+  <div style="display:flex;justify-content:space-between;border-bottom:2px solid #1a3a6b;padding-bottom:14px">
+    <div>
+      <h1 style="color:#1a3a6b;font-size:22px;margin-bottom:4px">${company.name}</h1>
+      <div style="font-size:12px;color:#444">${company.address}</div>
+      <div style="font-size:12px;color:#444">${company.contact}</div>
+      <div style="font-size:12px;font-weight:bold;margin-top:2px">GSTIN: ${company.gstin}</div>
     </div>
-  );
+    <div style="text-align:right">
+      <div style="background:#1a3a6b;color:#fff;padding:6px 14px;font-weight:bold;font-size:14px;border-radius:4px;display:inline-block">PARTY STATEMENT</div>
+      <div style="margin-top:8px;font-size:12px">Date: <b>${today()}</b></div>
+      <div style="font-size:12px">Total Bills: <b>${customerBills.length}</b></div>
+    </div>
+  </div>
+  <div style="background:#f0f5ff;border:1px solid #ccd;border-radius:6px;padding:12px 16px;margin-top:16px;display:flex;justify-content:space-between">
+    <div>
+      <div style="font-size:11px;text-transform:uppercase;color:#666;font-weight:bold">Statement For:</div>
+      <div style="font-size:18px;font-weight:bold;color:#1a3a6b">${customer.name}</div>
+      <div style="font-size:12px;color:#444;margin-top:2px">GSTIN: <b>${customer.gst||'Unregistered / N/A'}</b></div>
+      ${customer.phone ? `<div style="font-size:12px;color:#444">Phone: <b>${customer.phone}</b></div>` : ''}
+    </div>
+    <div style="text-align:right;border-left:1px solid #bbd;padding-left:20px">
+      <div style="font-size:11px;color:#666">OUTSTANDING BALANCE DUE</div>
+      <div style="font-size:22px;font-weight:bold;color:#c0392b">${fmtINR(netDue)}</div>
+      <div style="font-size:11px;color:#1a6b2a;margin-top:2px">Total Paid: ${fmtINR(totalPaid)}</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Sl</th><th>Date</th><th>Bill No</th><th>Bill Amount</th><th>Received</th><th>Balance Due</th><th>Status</th>
+    </tr></thead>
+    <tbody>
+      ${rows}
+      ${customerBills.length === 0 ? '<tr><td colspan="7" style="text-align:center;padding:30px;color:#888">No billing records found</td></tr>' : ''}
+    </tbody>
+    <tfoot>
+      <tr style="background:#1a3a6b;color:#fff;font-weight:bold;font-size:13px">
+        <td colspan="3" style="padding:10px;text-align:right">TOTALS:</td>
+        <td style="padding:10px;text-align:right">${fmtINR(totalBilled)}</td>
+        <td style="padding:10px;text-align:right">${fmtINR(totalPaid)}</td>
+        <td style="padding:10px;text-align:right">${fmtINR(netDue)}</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+  <div style="margin-top:30px;padding-top:14px;border-top:1px solid #ccc;display:flex;justify-content:space-between;align-items:flex-end">
+    <div style="font-size:11px;color:#555">
+      <b>Bank Details for Remittance:</b><br/>
+      ${company.bankName} | A/c No: ${company.accountNo} | IFSC: ${company.ifsc}
+    </div>
+    <div style="text-align:right;font-size:12px">
+      <div style="font-weight:bold">For ${company.name}</div>
+      <div style="margin-top:40px;border-top:1px dashed #666;padding-top:4px">Authorized Signatory</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>`;
 }
 
-// ── CUSTOMER AUTOCOMPLETE ────────────────────────────────────────────────────
-function CustomerAutocomplete({ value, customers, onChange, onSelect, style }) {
-  const [open, setOpen]       = useState(false);
+// ── WHATSAPP SHARE URL GENERATOR ─────────────────────────────────────────────
+function getWhatsAppShareUrl(bill, phone = '', driveUrl = '') {
+  const cleanPhone = (phone || '').replace(/\D/g, '');
+  const phoneParam = cleanPhone.length >= 10 ? `91${cleanPhone.slice(-10)}` : '';
+  const fin = getBillFinancials(bill);
+  const statusStr = fin.computedStatus === 'paid' ? 'PAID ✓' : (fin.computedStatus === 'partial' ? `PARTIAL (Paid: ₹${fin.totalPaid.toLocaleString('en-IN')})` : 'PENDING');
+  
+  const textLines = [
+    `🧾 *SRI GANAPATHI COLOURS — GST INVOICE*`,
+    `━━━━━━━━━━━━━━━━━━━━━━`,
+    `*Bill No:* #${bill.billNo}`,
+    `*Date:* ${bill.date}`,
+    `*Customer:* ${bill.customer}`,
+    bill.partyGst ? `*Party GST:* ${bill.partyGst}` : '',
+    `*Net Amount:* ₹${Number(bill.netAmount||0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    `*Payment Status:* ${statusStr}`,
+    fin.balance > 0 ? `*Balance Due:* ₹${Number(fin.balance).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '',
+    `━━━━━━━━━━━━━━━━━━━━━━`,
+    `🏦 *Bank Details for Payment:*`,
+    `Bank: CSB BANK`,
+    `A/c No: 003204157368195001`,
+    `IFSC: CSBK0000032`,
+    driveUrl || bill.driveUrl ? `\n📄 *Download PDF:* ${driveUrl || bill.driveUrl}` : '',
+    `\n_Thank you for your business!_`
+  ].filter(Boolean).join('\n');
+
+  return phoneParam
+    ? `https://wa.me/${phoneParam}?text=${encodeURIComponent(textLines)}`
+    : `https://wa.me/?text=${encodeURIComponent(textLines)}`;
+}
+
+// ── EXPORT BILLS TO CSV (GSTR-1 COMPLIANT FORMAT) ────────────────────────────
+function exportBillsToCSV(bills) {
+  const headers = [
+    "Sl No", "Invoice Date", "Invoice No", "Customer Name", "Customer GSTIN",
+    "HSN/SAC", "Total Kattu", "Total Kazhi", "Taxable Amount (Subtotal)",
+    "CGST Rate", "CGST Amount", "SGST Rate", "SGST Amount", "Round Off",
+    "Invoice Net Amount", "Payment Status", "Paid Amount", "Balance Due",
+    "Drive PDF Link"
+  ];
+
+  const rows = bills.map((b, i) => {
+    const fin = getBillFinancials(b);
+    const totalKattu = (b.items||[]).reduce((s,it)=>s+Number(it.kattu||0),0);
+    const totalKazhi = (b.items||[]).reduce((s,it)=>s+Number(it.kazhi||0),0);
+    return [
+      i + 1,
+      `"${b.date || ''}"`,
+      `"${b.billNo || ''}"`,
+      `"${(b.customer || '').replace(/"/g, '""')}"`,
+      `"${(b.partyGst || '').replace(/"/g, '""')}"`,
+      '"9988"',
+      totalKattu,
+      totalKazhi,
+      fmt(b.subtotal),
+      "2.50%",
+      fmt(b.cgst),
+      "2.50%",
+      fmt(b.sgst),
+      fmt(b.netAmount - (b.subtotal + b.cgst + b.sgst)),
+      fmt(b.netAmount),
+      `"${fin.computedStatus.toUpperCase()}"`,
+      fmt(fin.totalPaid),
+      fmt(fin.balance),
+      `"${b.driveUrl || ''}"`
+    ].join(',');
+  });
+
+  return "\uFEFF" + [headers.join(','), ...rows].join('\r\n');
+}
+
+// ── UI STYLES ─────────────────────────────────────────────────────────────────
+const C = {
+  bg:'#0c0c14', surface:'rgba(255,255,255,0.04)', surfaceHover:'rgba(255,255,255,0.07)',
+  border:'rgba(255,210,80,0.18)', borderMuted:'rgba(255,255,255,0.08)',
+  gold:'#ffc84a', goldGlow:'rgba(255,200,74,0.3)', text:'#ede5d0', textMuted:'rgba(237,229,208,0.5)',
+  green:'#4ed97a', red:'#ff6b6b', blue:'#7bc8ff', purple:'#b39ddb', orange:'#ffaa44', drive:'#34a853',
+};
+
+const S = {
+  app: { fontFamily:"'Segoe UI',system-ui,-apple-system,sans-serif", minHeight:'100vh', background:C.bg, color:C.text },
+  nav: { background:'rgba(10,10,18,0.98)', borderBottom:`1px solid ${C.border}`, padding:'0 24px', display:'flex', alignItems:'center', gap:4, position:'sticky', top:0, zIndex:100, backdropFilter:'blur(8px)', flexWrap:'wrap' },
+  navBrand: { fontSize:13, fontWeight:800, color:C.gold, letterSpacing:2.5, textTransform:'uppercase', padding:'16px 0', marginRight:24, display:'flex', alignItems:'center', gap:8 },
+  navTab: (a) => ({ padding:'16px 14px', fontSize:11, letterSpacing:1.5, textTransform:'uppercase', cursor:'pointer', color:a?C.gold:C.textMuted, background:'none', border:'none', borderBottom:`3px solid ${a?C.gold:'transparent'}`, fontFamily:'inherit', fontWeight:a?700:500, transition:'all 0.15s' }),
+  main: { padding:'24px', maxWidth:1340, margin:'0 auto' },
+  card: (accent='#ffc84a') => ({ background:C.surface, border:`1px solid ${accent}28`, borderRadius:14, padding:'20px 24px', transition:'all 0.2s', boxShadow:'0 4px 20px rgba(0,0,0,0.25)' }),
+  section: { background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:'24px', marginBottom:20, boxShadow:'0 6px 30px rgba(0,0,0,0.2)' },
+  secTitle: { fontSize:11, letterSpacing:3, textTransform:'uppercase', color:C.gold, fontWeight:700, marginBottom:16, display:'flex', alignItems:'center', gap:8 },
+  label: { fontSize:10, letterSpacing:1.8, textTransform:'uppercase', color:C.textMuted, marginBottom:6, display:'block', fontWeight:600 },
+  input: { background:'rgba(255,255,255,0.06)', border:`1px solid ${C.border}`, borderRadius:8, padding:'10px 14px', color:C.text, fontSize:13, width:'100%', fontFamily:'inherit', outline:'none', boxSizing:'border-box', transition:'border-color 0.15s' },
+  btn: (v) => ({
+    padding:'9px 18px', borderRadius:8, fontSize:11, letterSpacing:1.2, textTransform:'uppercase', cursor:'pointer', fontFamily:'inherit', fontWeight:700, transition:'all 0.15s', display:'inline-flex', alignItems:'center', gap:6, justifyContent:'center',
+    ...(v==='primary' ? { background:C.gold, border:'none', color:'#0c0c14', boxShadow:`0 2px 12px ${C.goldGlow}` }
+      : v==='success'  ? { background:'rgba(78,217,122,0.18)', border:'1px solid rgba(78,217,122,0.45)', color:C.green }
+      : v==='danger'   ? { background:'rgba(255,107,107,0.15)', border:'1px solid rgba(255,107,107,0.4)', color:C.red }
+      : v==='drive'    ? { background:'rgba(52,168,83,0.18)', border:'1px solid rgba(52,168,83,0.45)', color:C.drive }
+      : v==='blue'     ? { background:'rgba(123,200,255,0.18)', border:'1px solid rgba(123,200,255,0.45)', color:C.blue }
+      : v==='whatsapp' ? { background:'rgba(37,211,102,0.18)', border:'1px solid rgba(37,211,102,0.45)', color:'#25d366' }
+      : { background:'rgba(255,255,255,0.06)', border:`1px solid ${C.border}`, color:C.gold })
+  }),
+  th: { padding:'10px 12px', textAlign:'left', fontSize:10, letterSpacing:1.5, textTransform:'uppercase', color:C.textMuted, borderBottom:`1px solid ${C.border}`, fontWeight:700 },
+  td: { padding:'12px 12px', borderBottom:'1px solid rgba(255,255,255,0.04)', verticalAlign:'middle', fontSize:13 },
+  badge: (c) => ({ display:'inline-flex', alignItems:'center', gap:4, padding:'4px 10px', borderRadius:20, fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:0.8,
+    ...(c==='green'  ? { background:'rgba(78,217,122,0.15)',  color:C.green,  border:'1px solid rgba(78,217,122,0.35)' }
+      : c==='orange' ? { background:'rgba(255,170,68,0.15)',  color:C.orange, border:'1px solid rgba(255,170,68,0.35)' }
+      : c==='blue'   ? { background:'rgba(123,200,255,0.15)', color:C.blue,   border:'1px solid rgba(123,200,255,0.35)' }
+      : c==='drive'  ? { background:'rgba(52,168,83,0.15)',   color:C.drive,  border:'1px solid rgba(52,168,83,0.35)' }
+      : { background:'rgba(255,107,107,0.15)', color:C.red, border:'1px solid rgba(255,107,107,0.35)' }) }),
+};
+
+// ── AUTOCOMPLETE MODAL / DROPDOWN ────────────────────────────────────────────
+function AutocompleteInput({ value, options, onChange, onSelect, placeholder, style, renderItem }) {
+  const [open, setOpen] = useState(false);
   const [filtered, setFiltered] = useState([]);
   const ref = useRef(null);
+
   useEffect(() => {
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
+
   const handleChange = (val) => {
     onChange(val);
     if (!val.trim()) { setFiltered([]); setOpen(false); return; }
-    const f = customers.filter(c => c.name.toLowerCase().includes(val.toLowerCase())).slice(0, 8);
-    setFiltered(f); setOpen(f.length > 0);
+    const f = options.filter(opt => {
+      const text = typeof opt === 'string' ? opt : (opt.name || opt.count || '');
+      return text.toLowerCase().includes(val.toLowerCase());
+    }).slice(0, 8);
+    setFiltered(f);
+    setOpen(f.length > 0);
   };
+
   return (
-    <div ref={ref} style={{ position:'relative', flex:1 }}>
+    <div ref={ref} style={{ position:'relative', width:'100%' }}>
       <input style={style} value={value} onChange={e=>handleChange(e.target.value)}
         onFocus={()=>{ if (value.trim() && filtered.length > 0) setOpen(true); }}
-        placeholder="Type customer name..." autoComplete="off" />
+        placeholder={placeholder} autoComplete="off" />
       {open && (
-        <div style={{ position:'absolute', top:'100%', left:0, right:0, zIndex:100, background:'#13131f', border:'1px solid rgba(59,130,246,0.4)', borderRadius:8, boxShadow:'0 8px 32px rgba(0,0,0,0.6)', marginTop:4, overflow:'hidden' }}>
-          {filtered.map((c, i) => (
-            <div key={c.id} onMouseDown={()=>{ onSelect(c); setOpen(false); setFiltered([]); }}
-              style={{ padding:'10px 14px', cursor:'pointer', borderBottom:i<filtered.length-1?'1px solid rgba(255,255,255,0.05)':'none' }}
-              onMouseEnter={e=>e.currentTarget.style.background='rgba(59,130,246,0.15)'}
+        <div style={{ position:'absolute', top:'100%', left:0, right:0, zIndex:200, background:'#121422', border:'1px solid rgba(59,130,246,0.5)', borderRadius:8, boxShadow:'0 10px 30px rgba(0,0,0,0.8)', marginTop:4, maxHeight:220, overflowY:'auto' }}>
+          {filtered.map((item, i) => (
+            <div key={i} onMouseDown={()=>{ onSelect(item); setOpen(false); setFiltered([]); }}
+              style={{ padding:'9px 12px', cursor:'pointer', borderBottom:i<filtered.length-1?'1px solid rgba(255,255,255,0.05)':'none', transition:'background 0.1s' }}
+              onMouseEnter={e=>e.currentTarget.style.background='rgba(59,130,246,0.2)'}
               onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-              <div style={{ fontSize:13, color:'#e8f0ff', fontWeight:600 }}>{c.name}</div>
-              <div style={{ fontSize:10, color:'rgba(160,196,232,0.7)', marginTop:2 }}>GST: {c.gst}</div>
+              {renderItem ? renderItem(item) : (
+                <div style={{ fontSize:13, color:'#e8f0ff', fontWeight:600 }}>{typeof item === 'string' ? item : item.name}</div>
+              )}
             </div>
           ))}
         </div>
@@ -353,115 +606,269 @@ function CustomerAutocomplete({ value, customers, onChange, onSelect, style }) {
   );
 }
 
-// ── DRIVE AUTH PAGE ───────────────────────────────────────────────────────────
-function DriveAuthPage({ onConnected }) {
-  const [step, setStep]         = useState(1); // 1=upload secret, 2=auth code, 3=done
-  const [authCode, setAuthCode] = useState('');
-  const [msg, setMsg]           = useState('');
-  const [loading, setLoading]   = useState(false);
-  const fileRef = useRef(null);
+// ── PAYMENT & PARTIAL MODAL ──────────────────────────────────────────────────
+function PaymentModal({ bill, onConfirm, onCancel }) {
+  const fin = getBillFinancials(bill);
+  const [payAmount, setPayAmount] = useState(fin.balance > 0 ? fin.balance : bill.netAmount);
+  const [payDate, setPayDate]     = useState(today());
+  const [mode, setMode]           = useState('GPay / UPI');
+  const [receiptNo, setReceiptNo] = useState(`RCP-${bill.billNo}-${Date.now().toString().slice(-4)}`);
+  const [note, setNote]           = useState('');
+  const [history, setHistory]     = useState(bill.payments || []);
 
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const json = JSON.parse(text);
-      if (!json.installed) { setMsg('❌ Wrong file — "installed" key illa!'); return; }
-      setLoading(true);
-      const res = await api.googleAuthStart(json);
-      if (res.success) {
-        setMsg('✅ Browser la Google login page open aaguthu. Login panni code-a copy pannunga.');
-        setStep(2);
-      } else {
-        setMsg(`❌ Error: ${res.error}`);
-      }
-    } catch (err) {
-      setMsg(`❌ JSON parse error: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
+  const handleAddPayment = () => {
+    const amt = Number(payAmount);
+    if (!amt || amt <= 0) { alert('Enter valid payment amount!'); return; }
+    const newEntry = {
+      id: uid(),
+      date: payDate,
+      amount: amt,
+      mode,
+      receiptNo,
+      note,
+    };
+    const updatedHistory = [...history, newEntry];
+    setHistory(updatedHistory);
+    onConfirm(updatedHistory);
   };
 
-  const handleCodeSubmit = async () => {
-    if (!authCode.trim()) { setMsg('❌ Code enter pannunga!'); return; }
-    setLoading(true);
-    try {
-      const res = await api.googleAuthExchange(authCode);
-      if (res.success) {
-        setMsg('✅ Connected! Drive ready.');
-        setStep(3);
-        setTimeout(() => onConnected(), 1500);
-      } else {
-        setMsg(`❌ ${res.error}`);
-      }
-    } catch (err) {
-      setMsg(`❌ ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
+  const handleFullPay = () => {
+    const fullEntry = {
+      id: uid(),
+      date: today(),
+      amount: fin.balance > 0 ? fin.balance : bill.netAmount,
+      mode: 'Full Settlement',
+      receiptNo: `RCP-${bill.billNo}-${Date.now().toString().slice(-4)}`,
+      note: 'Marked full payment',
+    };
+    onConfirm([...history, fullEntry]);
+  };
+
+  const handleDeleteHistory = (id) => {
+    const updated = history.filter(p => p.id !== id);
+    setHistory(updated);
+    onConfirm(updated);
   };
 
   return (
-    <div style={{ maxWidth:560, margin:'60px auto' }}>
-      <div style={S.section}>
-        <div style={{ fontSize:32, marginBottom:16, textAlign:'center' }}>☁</div>
-        <div style={{ fontSize:18, fontWeight:700, color:C.gold, textAlign:'center', marginBottom:8 }}>Google Drive Connect</div>
-        <div style={{ fontSize:12, color:C.muted, textAlign:'center', marginBottom:28 }}>
-          Bills PDF-aa Drive la save pannanum — oru thadavai setup pannunga, done!
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.82)', zIndex:300, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
+      <div className="fade-in" style={{ background:'#121320', border:'1px solid rgba(78,217,122,0.4)', borderRadius:18, padding:28, width:'100%', maxWidth:480, boxShadow:'0 20px 60px rgba(0,0,0,0.7)' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+          <div>
+            <div style={{ fontSize:18, fontWeight:800, color:C.text }}>Record Payment</div>
+            <div style={{ fontSize:12, color:C.textMuted }}>Bill #{bill.billNo} — <b style={{ color:C.gold }}>{bill.customer}</b></div>
+          </div>
+          <button style={{ background:'none', border:'none', color:C.textMuted, fontSize:20, cursor:'pointer' }} onClick={onCancel}>✕</button>
         </div>
 
-        {/* Step 1 */}
-        <div style={{ background: step===1?'rgba(255,200,74,0.08)':'rgba(255,255,255,0.03)', border:`1px solid ${step===1?C.gold+'44':'rgba(255,255,255,0.08)'}`, borderRadius:10, padding:16, marginBottom:14 }}>
-          <div style={{ fontSize:11, color:step===1?C.gold:C.muted, fontWeight:700, letterSpacing:2, marginBottom:8 }}>STEP 1 — client_secret.json Upload Pannunga</div>
-          {step === 1 ? (
-            <>
-              <p style={{ fontSize:12, color:C.muted, marginBottom:12 }}>Ungal Google Cloud Console-la download panna <b style={{ color:C.text }}>client_secret.json</b> file-a select pannunga.</p>
-              <input ref={fileRef} type="file" accept=".json" style={{ display:'none' }} onChange={handleFileUpload} />
-              <button style={S.btn('primary')} onClick={()=>fileRef.current.click()} disabled={loading}>
-                {loading ? '⟳ Processing...' : '📂 JSON File Select'}
-              </button>
-            </>
-          ) : (
-            <div style={{ color:C.green, fontSize:12 }}>✅ Client secret loaded</div>
-          )}
+        <div style={{ background:'rgba(255,255,255,0.03)', borderRadius:10, padding:'12px 16px', marginBottom:18, display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, textAlign:'center' }}>
+          <div>
+            <div style={S.label}>Net Amount</div>
+            <div style={{ fontSize:15, fontWeight:700, color:C.text }}>{fmtINR(bill.netAmount)}</div>
+          </div>
+          <div>
+            <div style={S.label}>Total Paid</div>
+            <div style={{ fontSize:15, fontWeight:700, color:C.green }}>{fmtINR(fin.totalPaid)}</div>
+          </div>
+          <div>
+            <div style={S.label}>Balance Due</div>
+            <div style={{ fontSize:15, fontWeight:700, color:fin.balance>0?C.red:C.green }}>{fmtINR(fin.balance)}</div>
+          </div>
         </div>
 
-        {/* Step 2 */}
-        <div style={{ background: step===2?'rgba(255,200,74,0.08)':'rgba(255,255,255,0.03)', border:`1px solid ${step===2?C.gold+'44':'rgba(255,255,255,0.08)'}`, borderRadius:10, padding:16, marginBottom:14 }}>
-          <div style={{ fontSize:11, color:step>=2?C.gold:C.muted, fontWeight:700, letterSpacing:2, marginBottom:8 }}>STEP 2 — Auth Code Enter Pannunga</div>
-          {step === 2 && (
-            <>
-              <p style={{ fontSize:12, color:C.muted, marginBottom:12 }}>Browser la Google login panni, allow click pannunga. Kita varum <b style={{ color:C.text }}>code-a</b> copy panni paste pannunga.</p>
-              <input style={{ ...S.input, marginBottom:10 }} value={authCode} onChange={e=>setAuthCode(e.target.value)} placeholder="4/0AX4XfWi..." />
-              <button style={S.btn('success')} onClick={handleCodeSubmit} disabled={loading}>
-                {loading ? '⟳ Verifying...' : '✓ Connect Drive'}
-              </button>
-            </>
-          )}
-          {step > 2 && <div style={{ color:C.green, fontSize:12 }}>✅ Auth code accepted</div>}
-          {step < 2  && <div style={{ color:C.muted, fontSize:12 }}>— Step 1 complete aagattum</div>}
-        </div>
-
-        {msg && (
-          <div style={{ marginTop:14, padding:'10px 14px', background:'rgba(255,255,255,0.05)', borderRadius:8, fontSize:12, color:msg.startsWith('✅')?C.green:C.red }}>
-            {msg}
+        {/* Existing Payment Records */}
+        {history.length > 0 && (
+          <div style={{ marginBottom:16 }}>
+            <div style={{ ...S.label, marginBottom:6 }}>Payment History ({history.length})</div>
+            <div style={{ maxHeight:110, overflowY:'auto', background:'rgba(0,0,0,0.25)', borderRadius:8, padding:6 }}>
+              {history.map((h, i) => (
+                <div key={h.id || i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'6px 8px', borderBottom:'1px solid rgba(255,255,255,0.05)', fontSize:12 }}>
+                  <div>
+                    <span style={{ color:C.gold, fontWeight:700 }}>{fmtINR(h.amount)}</span>
+                    <span style={{ color:C.textMuted, marginLeft:8, fontSize:11 }}>({h.date} • {h.mode})</span>
+                  </div>
+                  <button style={{ background:'none', border:'none', color:C.red, cursor:'pointer', fontSize:12 }} onClick={()=>handleDeleteHistory(h.id)}>✕</button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
+
+        {/* Add Payment Form */}
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+          <div>
+            <label style={S.label}>Amount (₹)</label>
+            <input style={S.input} type="number" value={payAmount} onChange={e=>setPayAmount(e.target.value)} />
+          </div>
+          <div>
+            <label style={S.label}>Payment Date</label>
+            <input style={S.input} type="date" value={payDate} onChange={e=>setPayDate(e.target.value)} />
+          </div>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16 }}>
+          <div>
+            <label style={S.label}>Payment Mode</label>
+            <select style={{ ...S.input, background:'#191b2c' }} value={mode} onChange={e=>setMode(e.target.value)}>
+              <option value="GPay / UPI">GPay / UPI</option>
+              <option value="Bank Transfer / NEFT">Bank Transfer / NEFT</option>
+              <option value="Cash">Cash</option>
+              <option value="Cheque">Cheque</option>
+            </select>
+          </div>
+          <div>
+            <label style={S.label}>Receipt / Ref No</label>
+            <input style={S.input} value={receiptNo} onChange={e=>setReceiptNo(e.target.value)} />
+          </div>
+        </div>
+
+        <div style={{ display:'flex', gap:10 }}>
+          <button style={{ ...S.btn(), flex:1 }} onClick={onCancel}>Cancel</button>
+          {fin.balance > 0 && (
+            <button style={{ ...S.btn('blue'), flex:1 }} onClick={handleFullPay}>✓ Full Paid</button>
+          )}
+          <button style={{ ...S.btn('success'), flex:1.2 }} onClick={handleAddPayment}>+ Add Payment</button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ── NEW BILL FORM ─────────────────────────────────────────────────────────────
-function NewBillForm({ customers, bills, countMap, onSave, editBill, driveConnected }) {
+// ── CUSTOMER LEDGER MODAL ────────────────────────────────────────────────────
+function CustomerLedgerModal({ customer, bills, onClose, onEditBill, company }) {
+  const customerBills = bills.filter(b => b.customer === customer.name);
+  const totalBilled   = customerBills.reduce((s, b) => s + Number(b.netAmount || 0), 0);
+  const totalPaid     = customerBills.reduce((s, b) => s + getBillFinancials(b).totalPaid, 0);
+  const balanceDue    = Math.max(0, totalBilled - totalPaid);
+
+  const handlePrintStatement = () => {
+    api.printBill(generateCustomerStatementHTML(customer, customerBills, company));
+  };
+
+  const handleWhatsAppReminder = () => {
+    const lines = [
+      `🤝 *SRI GANAPATHI COLOURS — STATEMENT OF ACCOUNT*`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `*Party Name:* ${customer.name}`,
+      customer.gst ? `*GSTIN:* ${customer.gst}` : '',
+      `*Total Bills:* ${customerBills.length}`,
+      `*Total Billed:* ₹${totalBilled.toLocaleString('en-IN', {minimumFractionDigits:2})}`,
+      `*Total Paid:* ₹${totalPaid.toLocaleString('en-IN', {minimumFractionDigits:2})}`,
+      `*Outstanding Balance:* ₹${balanceDue.toLocaleString('en-IN', {minimumFractionDigits:2})}`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `🏦 *Bank Details:*`,
+      `CSB BANK | A/c: 003204157368195001 | IFSC: CSBK0000032`,
+      `\n_Kindly arrange payment for pending dues. Thank you!_`
+    ].filter(Boolean).join('\n');
+
+    const cleanPhone = (customer.phone || '').replace(/\D/g, '');
+    const url = cleanPhone.length >= 10
+      ? `https://wa.me/91${cleanPhone.slice(-10)}?text=${encodeURIComponent(lines)}`
+      : `https://wa.me/?text=${encodeURIComponent(lines)}`;
+    api.openExternal(url);
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:320, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
+      <div className="fade-in" style={{ background:'#121422', border:'1px solid rgba(255,200,74,0.3)', borderRadius:18, padding:28, width:'100%', maxWidth:920, maxHeight:'90vh', overflowY:'auto', boxShadow:'0 25px 70px rgba(0,0,0,0.8)' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:20, flexWrap:'wrap', gap:12 }}>
+          <div>
+            <div style={{ fontSize:11, letterSpacing:3, textTransform:'uppercase', color:C.gold }}>Customer Account Ledger</div>
+            <div style={{ fontSize:24, fontWeight:800, color:C.text }}>{customer.name}</div>
+            <div style={{ fontSize:12, color:C.textMuted, marginTop:2 }}>GSTIN: <span style={{ color:C.blue, fontFamily:'monospace' }}>{customer.gst || 'None'}</span> {customer.phone && `• Phone: ${customer.phone}`}</div>
+          </div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <button style={S.btn('whatsapp')} onClick={handleWhatsAppReminder}>💬 WhatsApp Reminder</button>
+            <button style={S.btn('blue')} onClick={handlePrintStatement}>🖨 Print Statement</button>
+            <button style={S.btn()} onClick={onClose}>✕ Close</button>
+          </div>
+        </div>
+
+        {/* Financial KPIs */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:12, marginBottom:22 }}>
+          <div style={S.card(C.blue)}>
+            <div style={S.label}>Total Bills</div>
+            <div style={{ fontSize:22, fontWeight:800, color:C.blue }}>{customerBills.length}</div>
+          </div>
+          <div style={S.card(C.gold)}>
+            <div style={S.label}>Total Invoiced</div>
+            <div style={{ fontSize:22, fontWeight:800, color:C.gold }}>{fmtINR(totalBilled)}</div>
+          </div>
+          <div style={S.card(C.green)}>
+            <div style={S.label}>Total Received</div>
+            <div style={{ fontSize:22, fontWeight:800, color:C.green }}>{fmtINR(totalPaid)}</div>
+          </div>
+          <div style={S.card(balanceDue>0?C.red:C.green)}>
+            <div style={S.label}>Outstanding Balance</div>
+            <div style={{ fontSize:22, fontWeight:800, color:balanceDue>0?C.red:C.green }}>{fmtINR(balanceDue)}</div>
+          </div>
+        </div>
+
+        {/* Bills Table */}
+        <div style={{ background:'rgba(255,255,255,0.02)', border:'1px solid rgba(255,255,255,0.06)', borderRadius:12, overflow:'hidden' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead>
+              <tr style={{ background:'rgba(255,255,255,0.04)' }}>
+                <th style={S.th}>Bill No</th>
+                <th style={S.th}>Date</th>
+                <th style={S.th}>Total Amount</th>
+                <th style={S.th}>Paid</th>
+                <th style={S.th}>Balance</th>
+                <th style={S.th}>Status</th>
+                <th style={S.th}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {customerBills.map(b => {
+                const fin = getBillFinancials(b);
+                return (
+                  <tr key={b.id}>
+                    <td style={{ ...S.td, fontWeight:700, color:C.gold }}>#{b.billNo}</td>
+                    <td style={{ ...S.td, color:C.textMuted }}>{b.date}</td>
+                    <td style={{ ...S.td, fontWeight:700 }}>{fmtINR(b.netAmount)}</td>
+                    <td style={{ ...S.td, color:C.green }}>{fmtINR(fin.totalPaid)}</td>
+                    <td style={{ ...S.td, color:fin.balance>0?C.red:C.green, fontWeight:700 }}>{fmtINR(fin.balance)}</td>
+                    <td style={S.td}>
+                      <span style={S.badge(fin.computedStatus==='paid'?'green':fin.computedStatus==='partial'?'orange':'danger')}>
+                        {fin.computedStatus}
+                      </span>
+                    </td>
+                    <td style={S.td}>
+                      <div style={{ display:'flex', gap:6 }}>
+                        <button style={{ ...S.btn('blue'), padding:'4px 8px', fontSize:10 }} onClick={()=>api.printBill(generateBillHTML(b, company))}>🖨</button>
+                        <button style={{ ...S.btn(), padding:'4px 8px', fontSize:10 }} onClick={()=>{ onClose(); onEditBill(b); }}>✎ Edit</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {customerBills.length === 0 && (
+                <tr><td colSpan={7} style={{ ...S.td, textAlign:'center', color:C.textMuted, padding:30 }}>No bills for this customer</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── NEW & EDIT BILL FORM ──────────────────────────────────────────────────────
+function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdit, driveConnected, company }) {
   const nextNo = editBill ? editBill.billNo : bills.length > 0 ? Math.max(...bills.map(b=>Number(b.billNo)||0))+1 : 1;
-  const [form, setForm]           = useState(editBill || { billNo:nextNo, date:today(), customer:'', partyGst:'', items:[{id:uid(),delNo:'',poNo:'',variety:'',count:'',kattu:'',kazhi:'',rate:'',amount:''}], status:'pending' });
+  const [form, setForm]           = useState(editBill || { billNo:nextNo, date:today(), customer:'', partyGst:'', items:[{id:uid(),delNo:'',poNo:'',variety:'',count:'',kattu:'',kazhi:'',rate:'',amount:''}], status:'pending', payments:[] });
   const [saving, setSaving]       = useState(false);
   const [uploadStatus, setUpload] = useState(null); // null | 'uploading' | 'done' | 'error'
   const [driveUrl, setDriveUrl]   = useState(editBill?.driveUrl || null);
   const [errMsg, setErrMsg]       = useState('');
   const [billNoEdit, setBillNoEdit] = useState(false);
+
+  useEffect(() => {
+    if (editBill) {
+      setForm(editBill);
+      setDriveUrl(editBill.driveUrl || null);
+    }
+  }, [editBill]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleCustomerSelect = (c) => setForm(f => ({ ...f, customer: c.name, partyGst: c.gst }));
@@ -491,6 +898,10 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, driveConnec
 
   const addRow    = () => setForm(f => ({ ...f, items: [...f.items, { id:uid(), delNo:'', poNo:'', variety:'', count:'', kattu:'', kazhi:'', rate:'', amount:'' }] }));
   const removeRow = (idx) => { if (form.items.length === 1) return; setForm(f => ({ ...f, items: f.items.filter((_,i)=>i!==idx) })); };
+  const cloneRow  = (idx) => {
+    const it = form.items[idx];
+    setForm(f => ({ ...f, items: [...f.items, { ...it, id:uid() }] }));
+  };
 
   const sub     = form.items.reduce((s, i) => s + Number(i.amount || 0), 0);
   const cgst    = sub * 0.025;
@@ -499,107 +910,149 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, driveConnec
   const net     = Math.round(rawNet);
   const rounded = net - rawNet;
 
+  const buildBillObject = () => ({
+    ...form,
+    billNo:    Number(form.billNo),
+    subtotal:  sub,
+    cgst,
+    sgst,
+    netAmount: net,
+    id:        form.id || uid(),
+    updatedAt: new Date().toISOString(),
+  });
+
   const handleSave = async () => {
     if (!form.customer.trim()) { alert('Customer name required!'); return; }
     setSaving(true);
     setUpload('uploading');
     setErrMsg('');
 
-    const bill = {
-      ...form,
-      billNo:   Number(form.billNo),
-      subtotal: sub, cgst, sgst,
-      netAmount: net,
-      id: form.id || uid(),
-    };
-
-    // 1. Save locally
+    const bill = buildBillObject();
     await onSave(bill);
 
-    // 2. Generate HTML
-    const htmlContent = generateBillHTML(bill);
+    const htmlContent = generateBillHTML(bill, company);
 
-    // 3. Upload PDF to Drive via Electron main process
-    const result = await api.saveAndUploadBill({ billData: bill, htmlContent });
-
-    if (result.success) {
-      const billWithUrl = { ...bill, driveUrl: result.driveUrl, driveFileId: result.fileId };
-      await onSave(billWithUrl);
-      setDriveUrl(result.driveUrl);
-      setUpload('done');
+    if (driveConnected) {
+      const result = await api.saveAndUploadBill({ billData: bill, htmlContent });
+      if (result.success) {
+        const billWithUrl = { ...bill, driveUrl: result.driveUrl, driveFileId: result.fileId };
+        await onSave(billWithUrl);
+        setDriveUrl(result.driveUrl);
+        setUpload('done');
+      } else {
+        setErrMsg(result.error || 'Drive upload failed');
+        setUpload('error');
+      }
     } else {
-      setErrMsg(result.error || 'Drive upload failed');
-      setUpload('error');
+      setUpload('done');
     }
 
     setSaving(false);
   };
 
-  const handlePrint = () => {
-    const pb = { ...form, billNo: Number(form.billNo), subtotal: sub, cgst, sgst, netAmount: net, id: 'preview' };
-    api.printBill(generateBillHTML(pb));
+  const handleSaveLocalPdf = async () => {
+    if (!form.customer.trim()) { alert('Customer name required!'); return; }
+    const bill = buildBillObject();
+    const htmlContent = generateBillHTML(bill, company);
+    const res = await api.saveLocalPdf({ billData: bill, htmlContent });
+    if (res.success) {
+      alert('✅ PDF saved successfully!');
+    }
   };
 
-  const bi  = { background:'rgba(26,58,107,0.25)', border:'1px solid rgba(59,130,246,0.4)', borderRadius:5, padding:'6px 8px', color:'#e8f0ff', fontSize:12, width:'100%', fontFamily:'inherit', outline:'none', boxSizing:'border-box', textAlign:'center' };
+  const handlePrint = () => {
+    const pb = buildBillObject();
+    api.printBill(generateBillHTML(pb, company));
+  };
+
+  const handleWhatsApp = () => {
+    const pb = buildBillObject();
+    const matched = customers.find(c => c.name.toLowerCase() === form.customer.toLowerCase());
+    const url = getWhatsAppShareUrl(pb, matched?.phone || '', driveUrl);
+    api.openExternal(url);
+  };
+
+  const handleReset = () => {
+    if (confirm('Clear form and start new bill?')) {
+      if (onCancelEdit) onCancelEdit();
+      const nNo = bills.length > 0 ? Math.max(...bills.map(b=>Number(b.billNo)||0))+1 : 1;
+      setForm({ billNo:nNo, date:today(), customer:'', partyGst:'', items:[{id:uid(),delNo:'',poNo:'',variety:'',count:'',kattu:'',kazhi:'',rate:'',amount:''}], status:'pending', payments:[] });
+      setDriveUrl(null);
+      setUpload(null);
+    }
+  };
+
+  const bi  = { background:'rgba(26,58,107,0.3)', border:'1px solid rgba(59,130,246,0.45)', borderRadius:6, padding:'7px 8px', color:'#e8f0ff', fontSize:12, width:'100%', fontFamily:'inherit', outline:'none', boxSizing:'border-box', textAlign:'center' };
   const biL = { ...bi, textAlign:'left' };
 
   return (
-    <div>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20, flexWrap:'wrap', gap:10 }}>
+    <div className="fade-in">
+      {/* Header bar */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:18, flexWrap:'wrap', gap:12 }}>
         <div>
-          <div style={{ fontSize:10, letterSpacing:4, textTransform:'uppercase', color:C.gold }}>Sri Ganapathi Colours</div>
-          <div style={{ fontSize:22, fontWeight:700, color:C.text }}>{editBill?'Edit Bill':'New Bill'} — <span style={{ color:'#3b82f6' }}>#{form.billNo}</span></div>
+          <div style={{ fontSize:10, letterSpacing:4, textTransform:'uppercase', color:C.gold }}>{company.name}</div>
+          <div style={{ fontSize:24, fontWeight:800, color:C.text, display:'flex', alignItems:'center', gap:10 }}>
+            {editBill ? '✏️ Edit Bill' : '➕ New Bill'} — <span style={{ color:C.blue }}>#{form.billNo}</span>
+            {editBill && (
+              <span style={{ fontSize:12, background:'rgba(255,170,68,0.2)', color:C.orange, border:'1px solid rgba(255,170,68,0.4)', borderRadius:6, padding:'2px 8px' }}>
+                Editing Mode
+              </span>
+            )}
+          </div>
         </div>
+
         <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+          {editBill && (
+            <button style={{ ...S.btn('danger'), padding:'8px 14px' }} onClick={onCancelEdit}>✕ Cancel Edit</button>
+          )}
           {uploadStatus === 'uploading' && (
             <span style={{ fontSize:11, color:C.drive, display:'flex', alignItems:'center', gap:5 }}>
               <span style={{ display:'inline-block', animation:'spin 1s linear infinite' }}>⟳</span>
-              PDF generate → Drive upload...
+              PDF Sync to Drive...
             </span>
           )}
-          {uploadStatus === 'done' && driveUrl && (
-            <span onClick={()=>api.openExternal(driveUrl)}
-              style={{ fontSize:11, color:C.drive, cursor:'pointer', background:'rgba(52,168,83,0.12)', border:'1px solid rgba(52,168,83,0.4)', borderRadius:6, padding:'5px 10px' }}>
-              ✅ PDF Drive la save achu! → Open ↗
+          {uploadStatus === 'done' && (
+            <span onClick={()=>driveUrl ? api.openExternal(driveUrl) : null}
+              style={{ fontSize:11, color:C.green, cursor:driveUrl?'pointer':'default', background:'rgba(78,217,122,0.12)', border:'1px solid rgba(78,217,122,0.4)', borderRadius:6, padding:'5px 10px' }}>
+              {driveUrl ? '✅ PDF in Drive → Open ↗' : '✅ Bill Saved!'}
             </span>
           )}
           {uploadStatus === 'error' && (
             <span style={{ fontSize:11, color:C.red, background:'rgba(255,107,107,0.1)', border:'1px solid rgba(255,107,107,0.3)', borderRadius:6, padding:'5px 10px' }}>
-              ⚠ {errMsg || 'Drive upload failed'}
+              ⚠ {errMsg}
             </span>
           )}
-          {!driveConnected && (
-            <span style={{ fontSize:11, color:'#ffaa44', background:'rgba(255,168,30,0.1)', border:'1px solid rgba(255,168,30,0.3)', borderRadius:6, padding:'5px 10px' }}>
-              ⚠ Drive not connected — Settings la connect pannunga
-            </span>
-          )}
-          <button style={{ ...S.btn('blue'), padding:'8px 14px' }} onClick={handlePrint}>🖨 Print</button>
+
+          <button style={S.btn('whatsapp')} onClick={handleWhatsApp}>💬 WhatsApp</button>
+          <button style={S.btn('blue')} onClick={handlePrint}>🖨 Print</button>
+          <button style={S.btn()} onClick={handleSaveLocalPdf}>📥 Local PDF</button>
           <button style={S.btn('primary')} onClick={handleSave} disabled={saving}>
-            {saving ? '⟳ Saving...' : '💾 Save & Upload PDF'}
+            {saving ? '⟳ Saving...' : '💾 Save Bill'}
           </button>
+          <button style={{ ...S.btn(), padding:'8px 12px' }} onClick={handleReset} title="Start fresh bill">➕ Reset</button>
         </div>
       </div>
 
-      {/* Bill form - same dark blue layout */}
-      <div style={{ background:'linear-gradient(135deg,#0d1b3e 0%,#0f2447 50%,#0d1b3e 100%)', border:'2px solid #1e4d8c', borderRadius:16, boxShadow:'0 0 60px rgba(30,77,140,0.4)', overflow:'hidden' }}>
-        {/* Header */}
-        <div style={{ display:'flex', borderBottom:'2px solid #1e4d8c' }}>
-          <div style={{ flex:'0 0 62%', padding:'14px 18px', borderRight:'2px solid #1e4d8c' }}>
-            <div style={{ fontSize:20, fontWeight:'bold', color:'#7bc8ff', letterSpacing:1, fontFamily:"'Times New Roman',serif", marginBottom:4 }}>SRI GANAPATHI COLOURS</div>
-            <div style={{ fontSize:11, color:'#a0c4e8' }}># 14/1, P.Vellalapatti, Puliyur (P.o), Karur - 639114.</div>
-            <div style={{ fontSize:11, color:'#a0c4e8' }}>Tamilnadu. Cell : <span style={{ color:'#fff', fontWeight:600 }}>9655527062</span></div>
-            <div style={{ fontSize:11, color:'#7bc8ff', marginTop:2, fontWeight:600 }}>GSTIN : 33HKSPS1735K1ZH &nbsp;&nbsp; HSN / SAC : 9988</div>
+      {/* Bill form layout */}
+      <div style={{ background:'linear-gradient(135deg,#0d1b3e 0%,#0f2447 50%,#0d1b3e 100%)', border:'2px solid #1e4d8c', borderRadius:16, boxShadow:'0 10px 50px rgba(13,27,62,0.6)', overflow:'hidden' }}>
+        {/* Header section */}
+        <div style={{ display:'flex', borderBottom:'2px solid #1e4d8c', flexWrap:'wrap' }}>
+          <div style={{ flex:'1 1 60%', padding:'16px 20px', borderRight:'2px solid #1e4d8c' }}>
+            <div style={{ fontSize:22, fontWeight:'bold', color:'#7bc8ff', letterSpacing:1, fontFamily:"'Times New Roman',serif", marginBottom:4 }}>{company.name}</div>
+            <div style={{ fontSize:11.5, color:'#a0c4e8' }}>{company.address}</div>
+            <div style={{ fontSize:11.5, color:'#a0c4e8' }}>{company.contact}</div>
+            <div style={{ fontSize:11.5, color:'#7bc8ff', marginTop:3, fontWeight:600 }}>GSTIN : {company.gstin} &nbsp;&nbsp; HSN / SAC : {company.hsn}</div>
           </div>
-          <div style={{ flex:1, padding:'12px 14px' }}>
-            <div style={{ textAlign:'center', background:'#1e4d8c', color:'#fff', fontWeight:'bold', fontSize:11, letterSpacing:2, padding:'5px 8px', borderRadius:4, marginBottom:10 }}>GST TAX INVOICE</div>
-            <div style={{ display:'grid', gridTemplateColumns:'auto 1fr', gap:'6px 8px', alignItems:'center' }}>
+          <div style={{ flex:'1 1 35%', padding:'14px 18px', minWidth:260 }}>
+            <div style={{ textAlign:'center', background:'#1e4d8c', color:'#fff', fontWeight:'bold', fontSize:11.5, letterSpacing:2, padding:'6px 8px', borderRadius:4, marginBottom:10 }}>GST TAX INVOICE</div>
+            <div style={{ display:'grid', gridTemplateColumns:'auto 1fr', gap:'6px 10px', alignItems:'center' }}>
               <span style={{ fontSize:11, color:'#a0c4e8', fontWeight:'bold' }}>Bill No. :</span>
               {billNoEdit ? (
-                <input style={{ ...bi, fontWeight:700, color:'#ffc84a', fontSize:15 }} type="number" value={form.billNo}
+                <input style={{ ...bi, fontWeight:800, color:'#ffc84a', fontSize:16 }} type="number" value={form.billNo}
                   onChange={e=>set('billNo',e.target.value)} onBlur={()=>setBillNoEdit(false)} autoFocus />
               ) : (
-                <div style={{ ...bi, fontWeight:700, color:'#ffc84a', fontSize:15, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }} onClick={()=>setBillNoEdit(true)}>
-                  {form.billNo}<span style={{ fontSize:9, color:'rgba(160,196,232,0.5)' }}>✎</span>
+                <div style={{ ...bi, fontWeight:800, color:'#ffc84a', fontSize:16, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }} onClick={()=>setBillNoEdit(true)}>
+                  {form.billNo}<span style={{ fontSize:10, color:'rgba(160,196,232,0.6)' }}>✎</span>
                 </div>
               )}
               <span style={{ fontSize:11, color:'#a0c4e8', fontWeight:'bold' }}>Date :</span>
@@ -608,24 +1061,50 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, driveConnec
           </div>
         </div>
 
-        <div style={{ textAlign:'center', background:'#1e4d8c', color:'#fff', fontWeight:'bold', letterSpacing:3, fontSize:12, padding:'6px', borderBottom:'2px solid #2563b0' }}>DYEING COOLIE CHARGES</div>
+        <div style={{ textAlign:'center', background:'#1e4d8c', color:'#fff', fontWeight:'bold', letterSpacing:3, fontSize:12, padding:'6px', borderBottom:'2px solid #2563b0' }}>{company.title}</div>
 
-        {/* Customer */}
-        <div style={{ padding:'10px 18px', borderBottom:'2px solid #1e4d8c' }}>
-          <div style={{ display:'grid', gridTemplateColumns:'36px 1fr 90px 1fr', gap:'0 10px', alignItems:'center' }}>
+        {/* Customer select */}
+        <div style={{ padding:'12px 20px', borderBottom:'2px solid #1e4d8c' }}>
+          <div style={{ display:'grid', gridTemplateColumns:'36px 1fr 90px 1fr', gap:'0 12px', alignItems:'center' }}>
             <span style={{ fontSize:12, color:'#a0c4e8', fontWeight:'bold' }}>M/s.</span>
-            <CustomerAutocomplete value={form.customer} customers={customers} onChange={v=>set('customer',v)} onSelect={handleCustomerSelect} style={biL} />
+            <AutocompleteInput
+              value={form.customer}
+              options={customers}
+              onChange={v=>set('customer',v)}
+              onSelect={handleCustomerSelect}
+              placeholder="Search or type customer name..."
+              style={biL}
+              renderItem={(c) => (
+                <div>
+                  <div style={{ fontSize:13, color:'#e8f0ff', fontWeight:600 }}>{c.name}</div>
+                  <div style={{ fontSize:10, color:'rgba(160,196,232,0.7)' }}>GST: {c.gst || 'None'}</div>
+                </div>
+              )}
+            />
             <span style={{ fontSize:12, color:'#a0c4e8', fontWeight:'bold', textAlign:'right' }}>Party GST</span>
-            <input style={biL} value={form.partyGst} onChange={e=>set('partyGst',e.target.value)} placeholder="Auto-filled on select" />
+            <input style={biL} value={form.partyGst} onChange={e=>set('partyGst',e.target.value)} placeholder="Auto-filled or enter GST" />
           </div>
         </div>
 
-        {/* Items table */}
+        {/* Quick yarn variety chips */}
+        <div style={{ padding:'6px 20px', background:'rgba(0,0,0,0.2)', borderBottom:'1px solid rgba(59,130,246,0.2)', display:'flex', gap:6, overflowX:'auto', alignItems:'center' }}>
+          <span style={{ fontSize:10, color:'#7bc8ff', fontWeight:700, textTransform:'uppercase', letterSpacing:1, whiteSpace:'nowrap' }}>Common Counts:</span>
+          {COMMON_COUNTS.slice(0, 7).map(c => (
+            <span key={c} onClick={()=>{
+              const lastIdx = form.items.length - 1;
+              setItem(lastIdx, 'count', c);
+            }} style={{ fontSize:10, background:'rgba(59,130,246,0.2)', border:'1px solid rgba(59,130,246,0.4)', borderRadius:4, padding:'2px 8px', color:'#a0c4e8', cursor:'pointer', whiteSpace:'nowrap' }}>
+              {c}
+            </span>
+          ))}
+        </div>
+
+        {/* Items Table */}
         <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
             <thead>
               <tr style={{ background:'#1e4d8c' }}>
-                {[['Sl.No','4%'],['Del. No.','10%'],['PO.No.','9%'],['Variety','20%'],['Count','8%'],['Kattu','7%'],['Kazhi','7%'],['Rate','10%'],['Amount','11%'],['','4%']].map(([h,w]) => (
+                {[['Sl','4%'],['Del. No.','10%'],['PO.No.','9%'],['Variety','22%'],['Count','9%'],['Kattu','7%'],['Kazhi','7%'],['Rate','9%'],['Amount','12%'],['','7%']].map(([h,w]) => (
                   <th key={h} style={{ padding:'8px 4px', color:'#e8f0ff', textAlign:'center', fontSize:10, letterSpacing:1.5, fontWeight:'bold', border:'1px solid rgba(255,255,255,0.15)', width:w }}>{h}</th>
                 ))}
               </tr>
@@ -647,14 +1126,21 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, driveConnec
                       {!it.poNo && idx>0 && effPo && <div style={{ position:'absolute', top:'50%', left:8, transform:'translateY(-50%)', fontSize:11, color:'rgba(160,196,232,0.4)', pointerEvents:'none', fontStyle:'italic' }}>{effPo}</div>}
                     </td>
                     <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px' }}>
-                      <input style={{ ...bi, textAlign:'left', padding:'5px 4px' }} value={it.variety} onChange={e=>setItem(idx,'variety',e.target.value)} />
+                      <AutocompleteInput
+                        value={it.variety}
+                        options={COMMON_VARIETIES}
+                        onChange={v=>setItem(idx,'variety',v)}
+                        onSelect={v=>setItem(idx,'variety',v)}
+                        placeholder="Cotton, Viscose..."
+                        style={{ ...bi, textAlign:'left', padding:'5px 6px' }}
+                      />
                     </td>
                     <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px' }}>
-                      <input style={{ ...bi, padding:'5px 4px', borderColor:matchedCount?'rgba(78,217,122,0.5)':'rgba(59,130,246,0.4)' }}
+                      <input style={{ ...bi, padding:'5px 4px', borderColor:matchedCount?'rgba(78,217,122,0.6)':'rgba(59,130,246,0.45)' }}
                         value={it.count} onChange={e=>setItem(idx,'count',e.target.value)} onBlur={()=>handleCountBlur(idx)} placeholder="17s" />
                       {matchedCount
-                        ? <div style={{ fontSize:9, color:'rgba(78,217,122,0.8)', textAlign:'center', marginTop:1 }}>={matchedCount.kazhi} kzh/ktt</div>
-                        : it.count && <div style={{ fontSize:9, color:'rgba(255,168,30,0.7)', textAlign:'center', marginTop:1 }}>no map</div>}
+                        ? <div style={{ fontSize:9, color:'rgba(78,217,122,0.9)', textAlign:'center', marginTop:1 }}>={matchedCount.kazhi} kzh/ktt</div>
+                        : it.count && <div style={{ fontSize:9, color:'rgba(255,168,30,0.8)', textAlign:'center', marginTop:1 }}>no map</div>}
                     </td>
                     <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px' }}>
                       <input style={{ ...bi, padding:'5px 4px' }} value={it.kattu} onChange={e=>setItem(idx,'kattu',e.target.value)} />
@@ -669,7 +1155,10 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, driveConnec
                       <input style={{ ...bi, fontWeight:700, color:'#ffc84a', textAlign:'right', padding:'5px 6px' }} value={it.amount} onChange={e=>setItem(idx,'amount',e.target.value)} />
                     </td>
                     <td style={{ border:'1px solid rgba(59,130,246,0.2)', textAlign:'center' }}>
-                      <button style={{ background:'none', border:'none', color:'rgba(255,107,107,0.5)', cursor:'pointer', fontSize:14, padding:'0 4px' }} onClick={()=>removeRow(idx)}>✕</button>
+                      <div style={{ display:'flex', justifyContent:'center', gap:4 }}>
+                        <button style={{ background:'none', border:'none', color:'#7bc8ff', cursor:'pointer', fontSize:12, padding:'0 3px' }} onClick={()=>cloneRow(idx)} title="Clone row">📋</button>
+                        <button style={{ background:'none', border:'none', color:'rgba(255,107,107,0.7)', cursor:'pointer', fontSize:13, padding:'0 3px' }} onClick={()=>removeRow(idx)} title="Remove row">✕</button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -677,38 +1166,38 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, driveConnec
             </tbody>
           </table>
         </div>
-        <div style={{ padding:'8px 14px', borderTop:'1px solid rgba(59,130,246,0.2)' }}>
-          <button style={{ background:'rgba(59,130,246,0.15)', border:'1px solid rgba(59,130,246,0.35)', borderRadius:6, padding:'5px 14px', fontSize:11, color:'#7bc8ff', cursor:'pointer', fontFamily:'inherit' }} onClick={addRow}>+ Add Row</button>
+        <div style={{ padding:'10px 18px', borderTop:'1px solid rgba(59,130,246,0.2)', display:'flex', gap:10 }}>
+          <button style={{ background:'rgba(59,130,246,0.2)', border:'1px solid rgba(59,130,246,0.4)', borderRadius:6, padding:'6px 16px', fontSize:11, color:'#7bc8ff', cursor:'pointer', fontFamily:'inherit', fontWeight:700 }} onClick={addRow}>+ Add Row</button>
         </div>
 
-        {/* Totals */}
-        <div style={{ display:'flex', borderTop:'2px solid #1e4d8c' }}>
-          <div style={{ flex:'0 0 55%', padding:'12px 18px', borderRight:'2px solid #1e4d8c' }}>
-            <div style={{ fontSize:12, color:'#e8f0ff', marginBottom:10 }}>
+        {/* Totals & Bank details */}
+        <div style={{ display:'flex', borderTop:'2px solid #1e4d8c', flexWrap:'wrap' }}>
+          <div style={{ flex:'1 1 55%', padding:'14px 20px', borderRight:'2px solid #1e4d8c' }}>
+            <div style={{ fontSize:12.5, color:'#e8f0ff', marginBottom:12 }}>
               <span style={{ color:'#a0c4e8', fontWeight:'bold' }}>Rupees </span>
-              <span style={{ color:'#ffc84a' }}>{numWords(net)}</span>
+              <span style={{ color:'#ffc84a', fontWeight:700 }}>{numWords(net)}</span>
               <span style={{ color:'#a0c4e8' }}> Only</span>
             </div>
-            <div style={{ fontSize:11, color:'#a0c4e8', lineHeight:1.7 }}>
+            <div style={{ fontSize:11.5, color:'#a0c4e8', lineHeight:1.7 }}>
               <span style={{ color:'#7bc8ff', fontWeight:'bold' }}>Bank Details :</span><br/>
-              <span style={{ color:'#fff', fontWeight:600 }}>CSB BANK</span><br/>
-              A/c No. : 003204157368195001<br/>IFSC : CSBK0000032
+              <span style={{ color:'#fff', fontWeight:600 }}>{company.bankName}</span><br/>
+              A/c No. : {company.accountNo}<br/>IFSC : {company.ifsc}
             </div>
           </div>
-          <div style={{ flex:1 }}>
+          <div style={{ flex:'1 1 40%', minWidth:260 }}>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}><tbody>
               {[['TOTAL',fmt(sub),false],['CGST  2.50 %',fmt(cgst),false],['SGST  2.50 %',fmt(sgst),false],['ROUNDED OFF',fmt(rounded),false],['NET AMOUNT',fmt(net),true]].map(([l,v,bold]) => (
                 <tr key={l} style={{ background:bold?'#1e4d8c':'transparent' }}>
-                  <td style={{ border:'1px solid rgba(59,130,246,0.25)', padding:'7px 12px', color:bold?'#fff':'#a0c4e8', fontWeight:bold?'bold':'normal', fontSize:bold?13:12 }}>{l}</td>
-                  <td style={{ border:'1px solid rgba(59,130,246,0.25)', padding:'7px 12px', textAlign:'right', color:bold?'#ffc84a':'#e8f0ff', fontWeight:bold?'bold':'normal', fontSize:bold?14:12 }}>{v}</td>
+                  <td style={{ border:'1px solid rgba(59,130,246,0.25)', padding:'8px 14px', color:bold?'#fff':'#a0c4e8', fontWeight:bold?'bold':'normal', fontSize:bold?13:12 }}>{l}</td>
+                  <td style={{ border:'1px solid rgba(59,130,246,0.25)', padding:'8px 14px', textAlign:'right', color:bold?'#ffc84a':'#e8f0ff', fontWeight:bold?'bold':'normal', fontSize:bold?15:12 }}>{v}</td>
                 </tr>
               ))}
-              <tr><td colSpan={2} style={{ border:'1px solid rgba(59,130,246,0.25)', padding:'6px 12px', textAlign:'right', fontSize:10, color:'#7bc8ff', fontWeight:'bold', fontStyle:'italic' }}>For SRI GANAPATHY COLOURS</td></tr>
+              <tr><td colSpan={2} style={{ border:'1px solid rgba(59,130,246,0.25)', padding:'6px 14px', textAlign:'right', fontSize:10.5, color:'#7bc8ff', fontWeight:'bold', fontStyle:'italic' }}>For {company.name}</td></tr>
             </tbody></table>
           </div>
         </div>
-        <div style={{ padding:'6px 18px', borderTop:'1px solid #1e4d8c', fontSize:10, color:'#6a8ab0' }}>
-          <b style={{ color:'#7bc8ff' }}>Declaration :</b> 1. All disputes under this sale subject to KARUR jurisdiction
+        <div style={{ padding:'8px 20px', borderTop:'1px solid #1e4d8c', fontSize:10.5, color:'#6a8ab0' }}>
+          <b style={{ color:'#7bc8ff' }}>Declaration :</b> 1. All disputes under this sale subject to {company.jurisdiction} jurisdiction
         </div>
       </div>
     </div>
@@ -716,104 +1205,353 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, driveConnec
 }
 
 // ── BILLS LIST ────────────────────────────────────────────────────────────────
-function BillsList({ bills, setBills, onSave }) {
-  const [filter, setFilter]     = useState('all');
-  const [search, setSearch]     = useState('');
-  const [payModal, setPayModal] = useState(null);
-  const [syncingId, setSyncId]  = useState(null);
+function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, company }) {
+  const [filter, setFilter]         = useState('all');
+  const [dateFilter, setDateFilter] = useState('all');
+  const [search, setSearch]         = useState('');
+  const [payModal, setPayModal]     = useState(null);
+  const [syncingId, setSyncId]      = useState(null);
 
-  const handleToggle = async (bill) => {
-    if (bill.status !== 'paid') { setPayModal(bill); }
-    else {
-      const u = bills.map(b=>b.id===bill.id?{...b,status:'pending',paidDate:null,receiptNo:null}:b);
-      setBills(u); await api.storeSet('sgc-bills', u);
-    }
-  };
-
-  const confirmPaid = async (paidDate, receiptNo) => {
-    const u = bills.map(b=>b.id===payModal.id?{...b,status:'paid',paidDate,receiptNo}:b);
-    setBills(u); await api.storeSet('sgc-bills', u); setPayModal(null);
+  const confirmPaid = async (updatedPayments) => {
+    const totalPaid = updatedPayments.reduce((s, p) => s + Number(p.amount || 0), 0);
+    const isFull = totalPaid >= payModal.netAmount;
+    const u = bills.map(b => b.id === payModal.id ? {
+      ...b,
+      payments: updatedPayments,
+      status: isFull ? 'paid' : (totalPaid > 0 ? 'partial' : 'pending'),
+      paidDate: isFull ? (b.paidDate || today()) : null,
+      receiptNo: isFull ? (b.receiptNo || `RCP-${b.billNo}`) : null,
+    } : b);
+    setBills(u);
+    await api.storeSet('sgc-bills', u);
+    setPayModal(null);
   };
 
   const del = async (id) => {
-    if (!confirm('Delete this bill?')) return;
-    const u = bills.filter(b=>b.id!==id);
-    setBills(u); await api.storeSet('sgc-bills', u);
+    if (!confirm('Are you sure you want to delete this bill?')) return;
+    const u = bills.filter(b => b.id !== id);
+    setBills(u);
+    await api.storeSet('sgc-bills', u);
   };
 
   const resync = async (bill) => {
     setSyncId(bill.id);
-    const result = await api.saveAndUploadBill({ billData:bill, htmlContent:generateBillHTML(bill) });
+    const result = await api.saveAndUploadBill({ billData: bill, htmlContent: generateBillHTML(bill, company) });
     if (result.success) {
-      const u = bills.map(b=>b.id===bill.id?{...b,driveUrl:result.driveUrl,driveFileId:result.fileId}:b);
-      setBills(u); await api.storeSet('sgc-bills', u);
+      const u = bills.map(b => b.id === bill.id ? { ...b, driveUrl: result.driveUrl, driveFileId: result.fileId } : b);
+      setBills(u);
+      await api.storeSet('sgc-bills', u);
     }
     setSyncId(null);
   };
 
-  const synced  = bills.filter(b=>b.driveUrl).length;
-  const list    = bills.filter(b=>{
-    if (filter==='paid'    && b.status!=='paid') return false;
-    if (filter==='pending' && b.status==='paid') return false;
-    if (search && !`${b.billNo} ${b.customer}`.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  }).sort((a,b)=>b.billNo-a.billNo);
+  const handleDownloadCSV = async () => {
+    const csvContent = exportBillsToCSV(list);
+    await api.exportFile({
+      defaultName: `SGC_Bills_Export_${today()}.csv`,
+      content: csvContent,
+      extension: 'csv',
+    });
+  };
 
-  const pc = bills.filter(b=>b.status!=='paid').length;
-  const pd = bills.filter(b=>b.status==='paid').length;
+  // Filtering
+  const now = new Date();
+  const currentMonth = now.toISOString().slice(0, 7);
+  const lastMonthObj = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonth = lastMonthObj.toISOString().slice(0, 7);
+
+  const list = bills.filter(b => {
+    const fin = getBillFinancials(b);
+    if (filter === 'paid'    && fin.computedStatus !== 'paid') return false;
+    if (filter === 'pending' && fin.computedStatus !== 'pending') return false;
+    if (filter === 'partial' && fin.computedStatus !== 'partial') return false;
+
+    if (dateFilter === 'this-month' && (!b.date || !b.date.startsWith(currentMonth))) return false;
+    if (dateFilter === 'last-month' && (!b.date || !b.date.startsWith(lastMonth))) return false;
+
+    if (search) {
+      const s = search.toLowerCase();
+      const matchCustomer = (b.customer || '').toLowerCase().includes(s);
+      const matchNo       = String(b.billNo || '').includes(s);
+      const matchDel      = (b.items || []).some(it => (it.delNo || '').toLowerCase().includes(s));
+      const matchPo       = (b.items || []).some(it => (it.poNo || '').toLowerCase().includes(s));
+      if (!matchCustomer && !matchNo && !matchDel && !matchPo) return false;
+    }
+    return true;
+  }).sort((a, b) => Number(b.billNo) - Number(a.billNo));
+
+  const syncedCount  = bills.filter(b => b.driveUrl).length;
+  const pendingCount = bills.filter(b => getBillFinancials(b).computedStatus === 'pending').length;
+  const partialCount = bills.filter(b => getBillFinancials(b).computedStatus === 'partial').length;
+  const paidCount    = bills.filter(b => getBillFinancials(b).computedStatus === 'paid').length;
 
   return (
-    <div>
+    <div className="fade-in">
       {payModal && <PaymentModal bill={payModal} onConfirm={confirmPaid} onCancel={()=>setPayModal(null)} />}
-      <div style={{ background:'rgba(52,168,83,0.08)', border:'1px solid rgba(52,168,83,0.25)', borderRadius:10, padding:'10px 16px', marginBottom:16, display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:8 }}>
-        <div style={{ fontSize:12, color:C.drive }}>{synced} of {bills.length} bills — PDF Drive la iruku ☁</div>
+
+      {/* Top Banner */}
+      <div style={{ background:'rgba(52,168,83,0.08)', border:'1px solid rgba(52,168,83,0.3)', borderRadius:12, padding:'12px 18px', marginBottom:18, display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:10 }}>
+        <div style={{ fontSize:12, color:C.drive, fontWeight:600 }}>
+          ☁ {syncedCount} of {bills.length} bills backed up to Google Drive PDF
+        </div>
+        <button style={{ ...S.btn('success'), padding:'6px 14px', fontSize:10 }} onClick={handleDownloadCSV}>
+          📊 Export Bills (Excel / CSV)
+        </button>
       </div>
-      <div style={{ display:'flex', gap:10, marginBottom:18, flexWrap:'wrap', alignItems:'center' }}>
-        <input style={{ ...S.input, maxWidth:240 }} value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Bill No. or Company..." />
-        {[['all',`All (${bills.length})`],['pending',`Pending (${pc})`],['paid',`Paid (${pd})`]].map(([v,l]) => (
-          <button key={v} style={{ ...S.btn(filter===v?'primary':''), padding:'8px 14px' }} onClick={()=>setFilter(v)}>{l}</button>
-        ))}
+
+      {/* Filters bar */}
+      <div style={{ display:'flex', gap:10, marginBottom:20, flexWrap:'wrap', alignItems:'center', justifyContent:'space-between' }}>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+          <input style={{ ...S.input, maxWidth:260 }} value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search Bill No, Party, Del No..." />
+          {[
+            ['all', `All (${bills.length})`],
+            ['pending', `Pending (${pendingCount})`],
+            ['partial', `Partial (${partialCount})`],
+            ['paid', `Paid (${paidCount})`],
+          ].map(([v, l]) => (
+            <button key={v} style={{ ...S.btn(filter===v?'primary':''), padding:'8px 12px' }} onClick={()=>setFilter(v)}>{l}</button>
+          ))}
+        </div>
+
+        <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+          <span style={{ fontSize:11, color:C.textMuted }}>Period:</span>
+          {[
+            ['all', 'All Time'],
+            ['this-month', 'This Month'],
+            ['last-month', 'Last Month'],
+          ].map(([v, l]) => (
+            <button key={v} style={{ ...S.btn(dateFilter===v?'blue':''), padding:'6px 10px', fontSize:10 }} onClick={()=>setDateFilter(v)}>{l}</button>
+          ))}
+        </div>
       </div>
+
+      {/* Bills Table */}
       <div style={S.section}>
         <div style={{ overflowX:'auto' }}>
-          <table style={{ width:'100%', minWidth:900 }}>
+          <table style={{ width:'100%', minWidth:980, borderCollapse:'collapse' }}>
             <thead><tr>
-              <th style={S.th}>Bill No</th><th style={S.th}>Date</th><th style={S.th}>Customer</th>
-              <th style={S.th}>Net Amount</th><th style={S.th}>Status</th><th style={S.th}>Paid Date</th>
-              <th style={{ ...S.th, color:C.drive }}>☁ PDF Drive</th><th style={S.th}>Actions</th>
+              <th style={S.th}>Bill No</th>
+              <th style={S.th}>Date</th>
+              <th style={S.th}>Customer</th>
+              <th style={S.th}>Net Amount</th>
+              <th style={S.th}>Status</th>
+              <th style={S.th}>Paid / Balance</th>
+              <th style={{ ...S.th, color:C.drive }}>☁ Drive</th>
+              <th style={{ ...S.th, textAlign:'right' }}>Actions</th>
             </tr></thead>
             <tbody>
-              {list.map(b => (
-                <tr key={b.id} style={{ opacity:b.status==='paid'?0.75:1 }}>
-                  <td style={{ ...S.td, fontWeight:700, color:C.gold }}>#{b.billNo}</td>
-                  <td style={{ ...S.td, color:C.muted, fontSize:12 }}>{b.date}</td>
-                  <td style={{ ...S.td, maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{b.customer}</td>
-                  <td style={{ ...S.td, fontWeight:700 }}>{fmtINR(b.netAmount)}</td>
-                  <td style={S.td}>
-                    <button onClick={()=>handleToggle(b)} style={{ background:'none', border:'none', cursor:'pointer', padding:0 }}>
-                      <span style={S.badge(b.status==='paid'?'green':'orange')}>{b.status==='paid'?'✓ Paid':'● Pending'}</span>
-                    </button>
-                  </td>
-                  <td style={{ ...S.td, fontSize:12, color:C.muted }}>{b.paidDate||'—'}</td>
-                  <td style={S.td}>
-                    {b.driveUrl ? (
-                      <span onClick={()=>api.openExternal(b.driveUrl)}
-                        style={{ color:C.drive, fontSize:11, cursor:'pointer', textDecoration:'underline' }}>☁ PDF Open</span>
-                    ) : syncingId===b.id ? (
-                      <span style={{ fontSize:11, color:C.drive }}>⟳ Uploading...</span>
-                    ) : (
-                      <button style={{ ...S.btn('drive'), padding:'4px 9px', fontSize:10 }} onClick={()=>resync(b)}>↑ Upload PDF</button>
-                    )}
-                  </td>
-                  <td style={S.td}>
-                    <div style={{ display:'flex', gap:6 }}>
-                      <button style={{ ...S.btn(), padding:'5px 10px', fontSize:10 }} onClick={()=>api.printBill(generateBillHTML(b))}>🖨</button>
-                      <button style={{ ...S.btn('danger'), padding:'5px 10px', fontSize:10 }} onClick={()=>del(b.id)}>Del</button>
-                    </div>
-                  </td>
+              {list.map(b => {
+                const fin = getBillFinancials(b);
+                const matchedCust = customers.find(c => c.name.toLowerCase() === (b.customer||'').toLowerCase());
+                return (
+                  <tr key={b.id} style={{ opacity:fin.computedStatus==='paid'?0.8:1 }}>
+                    <td style={{ ...S.td, fontWeight:800, color:C.gold }}>#{b.billNo}</td>
+                    <td style={{ ...S.td, color:C.textMuted, fontSize:12 }}>{b.date}</td>
+                    <td style={{ ...S.td, maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:600 }}>
+                      {b.customer}
+                    </td>
+                    <td style={{ ...S.td, fontWeight:800, color:C.text }}>{fmtINR(b.netAmount)}</td>
+                    <td style={S.td}>
+                      <button onClick={()=>setPayModal(b)} style={{ background:'none', border:'none', cursor:'pointer', padding:0 }}>
+                        <span style={S.badge(fin.computedStatus==='paid'?'green':fin.computedStatus==='partial'?'orange':'danger')}>
+                          {fin.computedStatus==='paid'?'✓ Paid':fin.computedStatus==='partial'?'● Partial':'● Pending'}
+                        </span>
+                      </button>
+                    </td>
+                    <td style={{ ...S.td, fontSize:12 }}>
+                      {fin.computedStatus==='paid' ? (
+                        <span style={{ color:C.green }}>{fmtINR(fin.totalPaid)}</span>
+                      ) : (
+                        <div>
+                          <div style={{ color:C.red, fontWeight:700 }}>Due: {fmtINR(fin.balance)}</div>
+                          {fin.totalPaid > 0 && <div style={{ color:C.green, fontSize:10 }}>Paid: {fmtINR(fin.totalPaid)}</div>}
+                        </div>
+                      )}
+                    </td>
+                    <td style={S.td}>
+                      {b.driveUrl ? (
+                        <span onClick={()=>api.openExternal(b.driveUrl)}
+                          style={{ color:C.drive, fontSize:11, cursor:'pointer', textDecoration:'underline', fontWeight:600 }}>☁ PDF Open</span>
+                      ) : syncingId===b.id ? (
+                        <span style={{ fontSize:11, color:C.drive }}>⟳ Uploading...</span>
+                      ) : (
+                        <button style={{ ...S.btn('drive'), padding:'4px 8px', fontSize:10 }} onClick={()=>resync(b)}>↑ Upload</button>
+                      )}
+                    </td>
+                    <td style={{ ...S.td, textAlign:'right' }}>
+                      <div style={{ display:'inline-flex', gap:5 }}>
+                        <button style={{ ...S.btn('whatsapp'), padding:'5px 8px', fontSize:11 }} onClick={()=>api.openExternal(getWhatsAppShareUrl(b, matchedCust?.phone || ''))} title="Share on WhatsApp">💬</button>
+                        <button style={{ ...S.btn('blue'), padding:'5px 8px', fontSize:11 }} onClick={()=>api.printBill(generateBillHTML(b, company))} title="Print Bill">🖨</button>
+                        <button style={{ ...S.btn(), padding:'5px 8px', fontSize:11 }} onClick={()=>onEditBill(b)} title="Edit Bill">✎</button>
+                        <button style={{ ...S.btn(), padding:'5px 8px', fontSize:11 }} onClick={()=>onCloneBill(b)} title="Clone Bill">📑</button>
+                        <button style={{ ...S.btn('danger'), padding:'5px 8px', fontSize:11 }} onClick={()=>del(b.id)} title="Delete Bill">✕</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {list.length===0 && (
+                <tr><td colSpan={8} style={{ ...S.td, textAlign:'center', color:C.textMuted, padding:40 }}>No bills match criteria</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ANALYTICS & REPORTS PAGE ──────────────────────────────────────────────────
+function AnalyticsPage({ bills, customers }) {
+  const totalTurnover = bills.reduce((s,b)=>s+Number(b.netAmount||0),0);
+  const totalCollected = bills.reduce((s,b)=>s+getBillFinancials(b).totalPaid,0);
+  const totalDue = Math.max(0, totalTurnover - totalCollected);
+
+  // Monthly breakdown
+  const monthlyData = useMemo(() => {
+    const map = {};
+    bills.forEach(b => {
+      const m = (b.date || '').slice(0, 7) || 'Other';
+      if (!map[m]) map[m] = { month: m, billed: 0, collected: 0 };
+      map[m].billed += Number(b.netAmount || 0);
+      map[m].collected += getBillFinancials(b).totalPaid;
+    });
+    return Object.values(map).sort((a,b)=>a.month.localeCompare(b.month)).slice(-8);
+  }, [bills]);
+
+  const maxMonthVal = Math.max(...monthlyData.map(m => Math.max(m.billed, m.collected)), 1000);
+
+  // Top Customers
+  const topCustomers = useMemo(() => {
+    const map = {};
+    bills.forEach(b => {
+      const name = b.customer || 'Unknown';
+      if (!map[name]) map[name] = { name, total: 0, count: 0, pending: 0 };
+      map[name].total += Number(b.netAmount || 0);
+      map[name].pending += getBillFinancials(b).balance;
+      map[name].count += 1;
+    });
+    return Object.values(map).sort((a,b)=>b.total - a.total).slice(0, 6);
+  }, [bills]);
+
+  // Count distribution
+  const countStats = useMemo(() => {
+    const map = {};
+    bills.forEach(b => {
+      (b.items || []).forEach(it => {
+        const c = autoFormatCount(it.count) || 'Unspecified';
+        if (!map[c]) map[c] = { count: c, kattu: 0, kazhi: 0, amount: 0 };
+        map[c].kattu += Number(it.kattu || 0);
+        map[c].kazhi += Number(it.kazhi || 0);
+        map[c].amount += Number(it.amount || 0);
+      });
+    });
+    return Object.values(map).sort((a,b)=>b.amount - a.amount).slice(0, 6);
+  }, [bills]);
+
+  return (
+    <div className="fade-in">
+      <div style={{ marginBottom:22 }}>
+        <div style={{ fontSize:10, letterSpacing:4, textTransform:'uppercase', color:C.gold }}>Business Intelligence</div>
+        <div style={{ fontSize:26, fontWeight:800, color:C.text }}>Financial Analytics & Insights</div>
+      </div>
+
+      {/* KPI Cards */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:14, marginBottom:26 }}>
+        <div style={S.card(C.gold)}>
+          <div style={S.label}>Total Turnover</div>
+          <div style={{ fontSize:22, fontWeight:800, color:C.gold }}>{fmtINR(totalTurnover)}</div>
+          <div style={{ fontSize:11, color:C.textMuted, marginTop:4 }}>{bills.length} total bills issued</div>
+        </div>
+        <div style={S.card(C.green)}>
+          <div style={S.label}>Cash Realized</div>
+          <div style={{ fontSize:22, fontWeight:800, color:C.green }}>{fmtINR(totalCollected)}</div>
+          <div style={{ fontSize:11, color:C.textMuted, marginTop:4 }}>{totalTurnover>0?((totalCollected/totalTurnover)*100).toFixed(1):0}% collection rate</div>
+        </div>
+        <div style={S.card(C.red)}>
+          <div style={S.label}>Market Outstanding Due</div>
+          <div style={{ fontSize:22, fontWeight:800, color:C.red }}>{fmtINR(totalDue)}</div>
+          <div style={{ fontSize:11, color:C.textMuted, marginTop:4 }}>Uncollected receivables</div>
+        </div>
+        <div style={S.card(C.blue)}>
+          <div style={S.label}>Active Parties</div>
+          <div style={{ fontSize:22, fontWeight:800, color:C.blue }}>{customers.length}</div>
+          <div style={{ fontSize:11, color:C.textMuted, marginTop:4 }}>Registered yarn parties</div>
+        </div>
+      </div>
+
+      {/* Monthly Chart */}
+      <div style={S.section}>
+        <div style={S.secTitle}>📈 Monthly Sales & Collection Trend</div>
+        <div style={{ height:200, display:'flex', alignItems:'flex-end', gap:20, paddingTop:30, paddingBottom:10, overflowX:'auto' }}>
+          {monthlyData.map(m => {
+            const hBilled = Math.round((m.billed / maxMonthVal) * 140);
+            const hPaid   = Math.round((m.collected / maxMonthVal) * 140);
+            return (
+              <div key={m.month} style={{ flex:'1 0 70px', display:'flex', flexDirection:'column', alignItems:'center', gap:6 }}>
+                <div style={{ display:'flex', alignItems:'flex-end', gap:4, height:140 }}>
+                  <div style={{ width:16, height:Math.max(4, hBilled), background:C.gold, borderRadius:'4px 4px 0 0', title:`Billed: ${fmtINR(m.billed)}` }}></div>
+                  <div style={{ width:16, height:Math.max(4, hPaid), background:C.green, borderRadius:'4px 4px 0 0', title:`Collected: ${fmtINR(m.collected)}` }}></div>
+                </div>
+                <div style={{ fontSize:10, color:C.textMuted, fontWeight:700 }}>{m.month}</div>
+              </div>
+            );
+          })}
+          {monthlyData.length === 0 && <div style={{ color:C.textMuted, fontSize:12 }}>No bill data recorded yet</div>}
+        </div>
+        <div style={{ display:'flex', gap:16, marginTop:12, fontSize:11, color:C.textMuted }}>
+          <div style={{ display:'flex', alignItems:'center', gap:6 }}><span style={{ width:10, height:10, background:C.gold, borderRadius:2 }}></span> Billed Amount</div>
+          <div style={{ display:'flex', alignItems:'center', gap:6 }}><span style={{ width:10, height:10, background:C.green, borderRadius:2 }}></span> Collected Amount</div>
+        </div>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(420px,1fr))', gap:20 }}>
+        {/* Top Customers */}
+        <div style={S.section}>
+          <div style={S.secTitle}>🏆 Top Customers by Revenue</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            {topCustomers.map((c, i) => {
+              const pct = totalTurnover > 0 ? ((c.total / totalTurnover) * 100).toFixed(1) : 0;
+              return (
+                <div key={c.name} style={{ background:'rgba(255,255,255,0.02)', padding:10, borderRadius:8 }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', fontSize:12, marginBottom:4 }}>
+                    <span style={{ fontWeight:700, color:C.text }}>{i+1}. {c.name}</span>
+                    <span style={{ fontWeight:800, color:C.gold }}>{fmtINR(c.total)} ({pct}%)</span>
+                  </div>
+                  <div style={{ width:'100%', height:6, background:'rgba(255,255,255,0.06)', borderRadius:3, overflow:'hidden' }}>
+                    <div style={{ width:`${pct}%`, height:'100%', background:C.gold }}></div>
+                  </div>
+                  <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, color:C.textMuted, marginTop:4 }}>
+                    <span>{c.count} bills</span>
+                    <span style={{ color:c.pending>0?C.red:C.green }}>Pending Due: {fmtINR(c.pending)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Count Volume Distribution */}
+        <div style={S.section}>
+          <div style={S.secTitle}>🧵 Yarn Count Volume Processed</div>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+            <thead>
+              <tr>
+                <th style={S.th}>Count</th>
+                <th style={S.th}>Total Kattu</th>
+                <th style={S.th}>Total Kazhi</th>
+                <th style={{ ...S.th, textAlign:'right' }}>Total Dyeing Charges</th>
+              </tr>
+            </thead>
+            <tbody>
+              {countStats.map(cs => (
+                <tr key={cs.count}>
+                  <td style={{ ...S.td, fontWeight:800, color:C.blue }}>{cs.count}</td>
+                  <td style={S.td}>{cs.kattu} ktt</td>
+                  <td style={S.td}>{cs.kazhi} kzh</td>
+                  <td style={{ ...S.td, textAlign:'right', fontWeight:700, color:C.gold }}>{fmtINR(cs.amount)}</td>
                 </tr>
               ))}
-              {list.length===0 && <tr><td colSpan={8} style={{ ...S.td, textAlign:'center', color:C.muted, padding:40 }}>No bills found</td></tr>}
             </tbody>
           </table>
         </div>
@@ -823,139 +1561,80 @@ function BillsList({ bills, setBills, onSave }) {
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function Dashboard({ bills }) {
+function Dashboard({ bills, onNewBill, onShowLedger, customers, company }) {
   const totalAmt   = bills.reduce((s,b)=>s+Number(b.netAmount||0),0);
-  const pendingAmt = bills.filter(b=>b.status!=='paid').reduce((s,b)=>s+Number(b.netAmount||0),0);
-  const paidAmt    = bills.filter(b=>b.status==='paid').reduce((s,b)=>s+Number(b.netAmount||0),0);
+  const totalPaid  = bills.reduce((s,b)=>s+getBillFinancials(b).totalPaid,0);
+  const pendingAmt = Math.max(0, totalAmt - totalPaid);
   const synced     = bills.filter(b=>b.driveUrl).length;
+
   const stats = [
-    [fmtINR(totalAmt),  C.gold,  'Total Billed'],
-    [fmtINR(pendingAmt),C.red,   'Pending'],
-    [fmtINR(paidAmt),   C.green, 'Collected'],
+    [fmtINR(totalAmt),   C.gold,  'Total Billed'],
+    [fmtINR(pendingAmt), C.red,   'Pending Dues'],
+    [fmtINR(totalPaid),  C.green, 'Collected Cash'],
     [`${synced}/${bills.length}`, C.drive, 'PDF in Drive'],
-    [`${bills.length}`, C.blue,  'Total Bills'],
-    [`${bills.filter(b=>b.status!=='paid').length}`, C.red, 'Pending Bills'],
+    [`${bills.length}`,  C.blue,  'Total Invoices'],
+    [`${bills.filter(b=>getBillFinancials(b).computedStatus!=='paid').length}`, C.orange, 'Pending Bills'],
   ];
+
   return (
-    <div>
-      <div style={{ marginBottom:24 }}>
-        <div style={{ fontSize:10, letterSpacing:4, textTransform:'uppercase', color:C.gold }}>Sri Ganapathi Colours</div>
-        <div style={{ fontSize:28, fontWeight:700, color:C.text }}>Dashboard</div>
+    <div className="fade-in">
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24, flexWrap:'wrap', gap:12 }}>
+        <div>
+          <div style={{ fontSize:10, letterSpacing:4, textTransform:'uppercase', color:C.gold }}>{company.name}</div>
+          <div style={{ fontSize:28, fontWeight:800, color:C.text }}>Business Overview</div>
+        </div>
+        <button style={S.btn('primary')} onClick={onNewBill}>➕ Create New Bill</button>
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))', gap:14, marginBottom:28 }}>
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))', gap:14, marginBottom:28 }}>
         {stats.map(([v,c,l]) => (
           <div key={l} style={S.card(c)}>
-            <div style={{ fontSize:10, letterSpacing:2, textTransform:'uppercase', color:C.muted, marginBottom:6 }}>{l}</div>
-            <div style={{ fontSize:22, fontWeight:700, color:c }}>{v}</div>
+            <div style={{ fontSize:10, letterSpacing:2, textTransform:'uppercase', color:C.textMuted, marginBottom:6 }}>{l}</div>
+            <div style={{ fontSize:22, fontWeight:800, color:c }}>{v}</div>
           </div>
         ))}
       </div>
+
       <div style={S.section}>
-        <div style={S.secTitle}>Recent Bills</div>
-        <table style={{ width:'100%' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+          <div style={S.secTitle}>Recent Invoices</div>
+        </div>
+        <table style={{ width:'100%', borderCollapse:'collapse' }}>
           <thead><tr>
-            <th style={S.th}>Bill No</th><th style={S.th}>Customer</th>
-            <th style={S.th}>Amount</th><th style={S.th}>Status</th><th style={S.th}>PDF</th>
+            <th style={S.th}>Bill No</th>
+            <th style={S.th}>Date</th>
+            <th style={S.th}>Customer</th>
+            <th style={S.th}>Amount</th>
+            <th style={S.th}>Status</th>
+            <th style={S.th}>Actions</th>
           </tr></thead>
           <tbody>
-            {[...bills].sort((a,b)=>b.billNo-a.billNo).slice(0,8).map(b=>(
-              <tr key={b.id}>
-                <td style={{ ...S.td, color:C.gold, fontWeight:700 }}>#{b.billNo}</td>
-                <td style={S.td}>{b.customer}</td>
-                <td style={{ ...S.td, fontWeight:700 }}>{fmtINR(b.netAmount)}</td>
-                <td style={S.td}><span style={S.badge(b.status==='paid'?'green':'orange')}>{b.status==='paid'?'✓ Paid':'● Pending'}</span></td>
-                <td style={S.td}>
-                  {b.driveUrl
-                    ? <span onClick={()=>api.openExternal(b.driveUrl)} style={{ color:C.drive, fontSize:11, cursor:'pointer' }}>☁ PDF</span>
-                    : <span style={{ color:C.muted, fontSize:11 }}>—</span>}
-                </td>
-              </tr>
-            ))}
-            {bills.length===0 && <tr><td colSpan={5} style={{ ...S.td, textAlign:'center', color:C.muted, padding:40 }}>No bills yet</td></tr>}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ── SETTINGS PAGE ─────────────────────────────────────────────────────────────
-function SettingsPage({ countMap, setCountMap, driveConnected, onDriveConnect, onDriveDisconnect, folderId, setFolderId }) {
-  const [newCount, setNewCount]   = useState('');
-  const [newKazhi, setNewKazhi]   = useState('');
-  const [cmMsg, setCmMsg]         = useState('');
-  const [folderEdit, setFolderEdit] = useState(folderId);
-
-  const addCount = async () => {
-    if (!newCount.trim() || !newKazhi) return;
-    const formatted = autoFormatCount(newCount.trim());
-    const u = [...countMap, { id:uid(), count:formatted, kazhi:Number(newKazhi) }];
-    setCountMap(u); await api.storeSet('sgc-countmap', u);
-    setNewCount(''); setNewKazhi('');
-    setCmMsg(`✓ Added ${formatted}`); setTimeout(()=>setCmMsg(''), 2000);
-  };
-
-  const removeCount = async (id) => {
-    const u = countMap.filter(c=>c.id!==id);
-    setCountMap(u); await api.storeSet('sgc-countmap', u);
-  };
-
-  const saveFolderId = async () => {
-    await api.storeSet('drive-folder-id', folderEdit);
-    setFolderId(folderEdit);
-    alert('Folder ID saved!');
-  };
-
-  return (
-    <div>
-      {/* Drive Connection */}
-      <div style={{ ...S.section, borderColor:driveConnected?'rgba(52,168,83,0.4)':'rgba(255,107,107,0.3)' }}>
-        <div style={{ ...S.secTitle, color:driveConnected?C.drive:C.red }}>Google Drive Connection</div>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
-          <div>
-            <div style={{ fontSize:13, color:driveConnected?C.green:C.red, fontWeight:700, marginBottom:4 }}>
-              {driveConnected ? '✅ Drive Connected — PDF upload ready!' : '❌ Drive not connected'}
-            </div>
-            <div style={{ fontSize:11, color:C.muted }}>
-              {driveConnected ? 'Bills save pannum podhu PDF-aa automatically Drive la upload agum.' : 'Connect panna Drive Auth tab-la po.'}
-            </div>
-          </div>
-          {driveConnected ? (
-            <button style={{ ...S.btn('danger'), padding:'8px 16px' }} onClick={onDriveDisconnect}>Disconnect Drive</button>
-          ) : (
-            <button style={{ ...S.btn('drive'), padding:'8px 16px' }} onClick={onDriveConnect}>Connect Drive →</button>
-          )}
-        </div>
-        {driveConnected && (
-          <div style={{ marginTop:16, display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap' }}>
-            <div style={{ flex:1, minWidth:200 }}>
-              <label style={S.label}>Drive Folder ID</label>
-              <input style={S.input} value={folderEdit} onChange={e=>setFolderEdit(e.target.value)} placeholder="Google Drive Folder ID" />
-            </div>
-            <button style={S.btn('success')} onClick={saveFolderId}>Save</button>
-          </div>
-        )}
-      </div>
-
-      {/* Count Map */}
-      <div style={S.section}>
-        <div style={S.secTitle}>Count → Kazhi Mapping</div>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr auto auto', gap:10, alignItems:'flex-end', marginBottom:16 }}>
-          <div><label style={S.label}>Count</label><input style={S.input} value={newCount} onChange={e=>setNewCount(e.target.value)} placeholder="17s" /></div>
-          <div><label style={S.label}>Kazhi per Kattu</label><input style={S.input} type="number" value={newKazhi} onChange={e=>setNewKazhi(e.target.value)} placeholder="17" /></div>
-          <button style={S.btn('primary')} onClick={addCount}>+ Add</button>
-          {cmMsg && <span style={{ fontSize:12, color:C.green }}>{cmMsg}</span>}
-        </div>
-        <table style={{ width:'100%' }}>
-          <thead><tr><th style={S.th}>Count</th><th style={S.th}>Kazhi / Kattu</th><th style={S.th}></th></tr></thead>
-          <tbody>
-            {countMap.map(cm=>(
-              <tr key={cm.id}>
-                <td style={{ ...S.td, fontWeight:700, color:C.gold }}>{cm.count}</td>
-                <td style={S.td}>{cm.kazhi}</td>
-                <td style={S.td}><button style={{ ...S.btn('danger'), padding:'4px 10px', fontSize:10 }} onClick={()=>removeCount(cm.id)}>Remove</button></td>
-              </tr>
-            ))}
+            {[...bills].sort((a,b)=>Number(b.billNo)-Number(a.billNo)).slice(0,8).map(b => {
+              const fin = getBillFinancials(b);
+              const cust = customers.find(c=>c.name===b.customer);
+              return (
+                <tr key={b.id}>
+                  <td style={{ ...S.td, color:C.gold, fontWeight:800 }}>#{b.billNo}</td>
+                  <td style={{ ...S.td, color:C.textMuted, fontSize:12 }}>{b.date}</td>
+                  <td style={{ ...S.td, fontWeight:600 }}>{b.customer}</td>
+                  <td style={{ ...S.td, fontWeight:800 }}>{fmtINR(b.netAmount)}</td>
+                  <td style={S.td}>
+                    <span style={S.badge(fin.computedStatus==='paid'?'green':fin.computedStatus==='partial'?'orange':'danger')}>
+                      {fin.computedStatus==='paid'?'✓ Paid':fin.computedStatus==='partial'?'● Partial':'● Pending'}
+                    </span>
+                  </td>
+                  <td style={S.td}>
+                    <div style={{ display:'flex', gap:6 }}>
+                      <button style={{ ...S.btn('blue'), padding:'4px 8px', fontSize:10 }} onClick={()=>api.printBill(generateBillHTML(b, company))}>🖨 Print</button>
+                      {cust && (
+                        <button style={{ ...S.btn(), padding:'4px 8px', fontSize:10 }} onClick={()=>onShowLedger(cust)}>👤 Ledger</button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {bills.length===0 && <tr><td colSpan={6} style={{ ...S.td, textAlign:'center', color:C.textMuted, padding:40 }}>No bills yet</td></tr>}
           </tbody>
         </table>
       </div>
@@ -964,46 +1643,79 @@ function SettingsPage({ countMap, setCountMap, driveConnected, onDriveConnect, o
 }
 
 // ── CUSTOMERS PAGE ────────────────────────────────────────────────────────────
-function CustomersPage({ customers, bills, setCustomers }) {
-  const [nm, setNm]=useState(''), [gst, setGst]=useState(''), [search, setSearch]=useState('');
+function CustomersPage({ customers, bills, setCustomers, onShowLedger }) {
+  const [nm, setNm]         = useState('');
+  const [gst, setGst]       = useState('');
+  const [phone, setPhone]   = useState('');
+  const [search, setSearch] = useState('');
+
   const add = async () => {
     if (!nm.trim()) return;
-    const u = [...customers, { id:uid(), name:nm.trim(), gst:gst.trim() }];
-    setCustomers(u); await api.storeSet('sgc-customers', u); setNm(''); setGst('');
+    const u = [...customers, { id:uid(), name:nm.trim(), gst:gst.trim(), phone:phone.trim() }];
+    setCustomers(u);
+    await api.storeSet('sgc-customers', u);
+    setNm(''); setGst(''); setPhone('');
   };
+
   const remove = async (id) => {
-    if (!confirm('Remove?')) return;
+    if (!confirm('Are you sure you want to remove this customer?')) return;
     const u = customers.filter(c=>c.id!==id);
-    setCustomers(u); await api.storeSet('sgc-customers', u);
+    setCustomers(u);
+    await api.storeSet('sgc-customers', u);
   };
-  const filtered = customers.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.gst.toLowerCase().includes(search.toLowerCase()));
+
+  const filtered = customers.filter(c =>
+    !search ||
+    c.name.toLowerCase().includes(search.toLowerCase()) ||
+    (c.gst && c.gst.toLowerCase().includes(search.toLowerCase())) ||
+    (c.phone && c.phone.includes(search))
+  );
+
   return (
-    <div>
+    <div className="fade-in">
       <div style={S.section}>
-        <div style={S.secTitle}>Add New Customer</div>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr auto', gap:12, alignItems:'flex-end' }}>
-          <div><label style={S.label}>Name</label><input style={S.input} value={nm} onChange={e=>setNm(e.target.value)} placeholder="Shop name" /></div>
-          <div><label style={S.label}>GST</label><input style={S.input} value={gst} onChange={e=>setGst(e.target.value)} placeholder="33XXXXX..." /></div>
-          <button style={S.btn('primary')} onClick={add}>+ Add</button>
+        <div style={S.secTitle}>Add New Customer / Yarn Party</div>
+        <div style={{ display:'grid', gridTemplateColumns:'1.5fr 1fr 1fr auto', gap:12, alignItems:'flex-end' }}>
+          <div><label style={S.label}>Party / Mill Name</label><input style={S.input} value={nm} onChange={e=>setNm(e.target.value)} placeholder="e.g. Unity Exports" /></div>
+          <div><label style={S.label}>GST Number</label><input style={S.input} value={gst} onChange={e=>setGst(e.target.value)} placeholder="33XXXXX..." /></div>
+          <div><label style={S.label}>Phone Number</label><input style={S.input} value={phone} onChange={e=>setPhone(e.target.value)} placeholder="98XXXXXXXX" /></div>
+          <button style={S.btn('primary')} onClick={add}>+ Add Customer</button>
         </div>
       </div>
+
       <div style={S.section}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:10 }}>
           <div style={S.secTitle}>All Customers ({customers.length})</div>
-          <input style={{ ...S.input, maxWidth:220 }} value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search..." />
+          <input style={{ ...S.input, maxWidth:260 }} value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search Party or GST..." />
         </div>
-        <table style={{ width:'100%' }}>
-          <thead><tr><th style={S.th}>#</th><th style={S.th}>Name</th><th style={S.th}>GST</th><th style={S.th}>Bills</th><th style={S.th}></th></tr></thead>
+        <table style={{ width:'100%', borderCollapse:'collapse' }}>
+          <thead><tr>
+            <th style={S.th}>#</th>
+            <th style={S.th}>Party Name</th>
+            <th style={S.th}>GST Number</th>
+            <th style={S.th}>Phone</th>
+            <th style={S.th}>Total Bills</th>
+            <th style={S.th}>Outstanding</th>
+            <th style={{ ...S.th, textAlign:'right' }}>Actions</th>
+          </tr></thead>
           <tbody>
-            {filtered.map((c,i) => {
+            {filtered.map((c, i) => {
               const cb = bills.filter(b=>b.customer===c.name);
+              const due = cb.reduce((s,b)=>s+getBillFinancials(b).balance, 0);
               return (
                 <tr key={c.id}>
-                  <td style={{ ...S.td, color:C.muted, fontSize:11 }}>{i+1}</td>
+                  <td style={{ ...S.td, color:C.textMuted, fontSize:11 }}>{i+1}</td>
                   <td style={{ ...S.td, fontWeight:700, color:C.gold }}>{c.name}</td>
-                  <td style={{ ...S.td, fontSize:11, color:C.muted, fontFamily:'monospace' }}>{c.gst||'—'}</td>
-                  <td style={S.td}><span style={S.badge(cb.length>0?'green':'orange')}>{cb.length} bills</span></td>
-                  <td style={S.td}><button style={{ ...S.btn('danger'), padding:'4px 10px', fontSize:10 }} onClick={()=>remove(c.id)}>Remove</button></td>
+                  <td style={{ ...S.td, fontSize:11, color:C.textMuted, fontFamily:'monospace' }}>{c.gst||'—'}</td>
+                  <td style={{ ...S.td, fontSize:12, color:C.blue }}>{c.phone||'—'}</td>
+                  <td style={S.td}><span style={S.badge(cb.length>0?'blue':'orange')}>{cb.length} bills</span></td>
+                  <td style={{ ...S.td, fontWeight:700, color:due>0?C.red:C.green }}>{fmtINR(due)}</td>
+                  <td style={{ ...S.td, textAlign:'right' }}>
+                    <div style={{ display:'inline-flex', gap:6 }}>
+                      <button style={{ ...S.btn('blue'), padding:'4px 10px', fontSize:10 }} onClick={()=>onShowLedger(c)}>👤 Statement / Ledger</button>
+                      <button style={{ ...S.btn('danger'), padding:'4px 10px', fontSize:10 }} onClick={()=>remove(c.id)}>✕</button>
+                    </div>
+                  </td>
                 </tr>
               );
             })}
@@ -1014,27 +1726,293 @@ function CustomersPage({ customers, bills, setCustomers }) {
   );
 }
 
-// ── ROOT APP ──────────────────────────────────────────────────────────────────
+// ── SETTINGS PAGE ─────────────────────────────────────────────────────────────
+function SettingsPage({ countMap, setCountMap, driveConnected, onDriveConnect, onDriveDisconnect, folderId, setFolderId, company, setCompany, bills, setBills, customers, setCustomers }) {
+  const [newCount, setNewCount]     = useState('');
+  const [newKazhi, setNewKazhi]     = useState('');
+  const [cmMsg, setCmMsg]           = useState('');
+  const [folderEdit, setFolderEdit] = useState(folderId);
+  const [compEdit, setCompEdit]     = useState(company || DEFAULT_COMPANY);
+  const [backupMsg, setBackupMsg]   = useState('');
+
+  const addCount = async () => {
+    if (!newCount.trim() || !newKazhi) return;
+    const formatted = autoFormatCount(newCount.trim());
+    const u = [...countMap, { id:uid(), count:formatted, kazhi:Number(newKazhi) }];
+    setCountMap(u);
+    await api.storeSet('sgc-countmap', u);
+    setNewCount(''); setNewKazhi('');
+    setCmMsg(`✓ Added ${formatted}`);
+    setTimeout(()=>setCmMsg(''), 2000);
+  };
+
+  const removeCount = async (id) => {
+    const u = countMap.filter(c=>c.id!==id);
+    setCountMap(u);
+    await api.storeSet('sgc-countmap', u);
+  };
+
+  const saveFolderId = async () => {
+    await api.storeSet('drive-folder-id', folderEdit);
+    setFolderId(folderEdit);
+    alert('Folder ID saved!');
+  };
+
+  const saveCompanyProfile = async () => {
+    await api.storeSet('sgc-company-profile', compEdit);
+    setCompany(compEdit);
+    alert('Company details updated successfully!');
+  };
+
+  const handleBackupDownload = async () => {
+    const backupData = {
+      version: '5.0',
+      exportedAt: new Date().toISOString(),
+      bills,
+      customers,
+      countMap,
+      company: compEdit,
+      folderId,
+    };
+    const content = JSON.stringify(backupData, null, 2);
+    const res = await api.exportFile({
+      defaultName: `SGC_Billing_Full_Backup_${today()}.json`,
+      content,
+      extension: 'json',
+    });
+    if (res.success) {
+      setBackupMsg('✅ Backup downloaded successfully!');
+      setTimeout(()=>setBackupMsg(''), 3000);
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    const res = await api.importFile();
+    if (res.success && res.data) {
+      const data = res.data;
+      if (!data.bills || !Array.isArray(data.bills)) {
+        alert('Invalid backup file structure!');
+        return;
+      }
+      if (confirm(`Restore ${data.bills.length} bills and ${data.customers?.length || 0} customers from backup? This will update your system.`)) {
+        if (data.bills)     { setBills(data.bills); await api.storeSet('sgc-bills', data.bills); }
+        if (data.customers) { setCustomers(data.customers); await api.storeSet('sgc-customers', data.customers); }
+        if (data.countMap)  { setCountMap(data.countMap); await api.storeSet('sgc-countmap', data.countMap); }
+        if (data.company)   { setCompany(data.company); setCompEdit(data.company); await api.storeSet('sgc-company-profile', data.company); }
+        alert('✅ Data restored successfully!');
+      }
+    }
+  };
+
+  return (
+    <div className="fade-in">
+      {/* Drive Connection */}
+      <div style={{ ...S.section, borderColor:driveConnected?'rgba(52,168,83,0.4)':'rgba(255,107,107,0.3)' }}>
+        <div style={{ ...S.secTitle, color:driveConnected?C.drive:C.red }}>Google Drive PDF Auto-Backup</div>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
+          <div>
+            <div style={{ fontSize:14, color:driveConnected?C.green:C.red, fontWeight:700, marginBottom:4 }}>
+              {driveConnected ? '✅ Drive Connected — Automatic PDF upload is active' : '❌ Drive Offline — Connect for Google Drive sync'}
+            </div>
+            <div style={{ fontSize:11, color:C.textMuted }}>
+              When connected, bills are automatically converted to PDF and saved to your Google Drive folder.
+            </div>
+          </div>
+          {driveConnected ? (
+            <button style={S.btn('danger')} onClick={onDriveDisconnect}>Disconnect Drive</button>
+          ) : (
+            <button style={S.btn('drive')} onClick={onDriveConnect}>Connect Drive →</button>
+          )}
+        </div>
+        {driveConnected && (
+          <div style={{ marginTop:16, display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap' }}>
+            <div style={{ flex:1, minWidth:240 }}>
+              <label style={S.label}>Google Drive Folder ID</label>
+              <input style={S.input} value={folderEdit} onChange={e=>setFolderEdit(e.target.value)} />
+            </div>
+            <button style={S.btn('success')} onClick={saveFolderId}>Save Folder ID</button>
+          </div>
+        )}
+      </div>
+
+      {/* Backup & Restore */}
+      <div style={S.section}>
+        <div style={S.secTitle}>🛡️ System Data Backup & Restore</div>
+        <p style={{ fontSize:12, color:C.textMuted, marginBottom:16 }}>
+          Export all your billing records, customer directories, and configurations into a single JSON file. You can restore it anytime on any computer.
+        </p>
+        <div style={{ display:'flex', gap:12, flexWrap:'wrap', alignItems:'center' }}>
+          <button style={S.btn('primary')} onClick={handleBackupDownload}>📥 Download Full Backup (.json)</button>
+          <button style={S.btn('blue')} onClick={handleRestoreBackup}>📤 Restore Backup File</button>
+          {backupMsg && <span style={{ fontSize:12, color:C.green, fontWeight:700 }}>{backupMsg}</span>}
+        </div>
+      </div>
+
+      {/* Count Map */}
+      <div style={S.section}>
+        <div style={S.secTitle}>Count → Kazhi Calculation Mapping</div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr auto', gap:10, alignItems:'flex-end', marginBottom:16 }}>
+          <div><label style={S.label}>Yarn Count (e.g. 17s)</label><input style={S.input} value={newCount} onChange={e=>setNewCount(e.target.value)} placeholder="17s" /></div>
+          <div><label style={S.label}>Kazhi per Kattu</label><input style={S.input} type="number" value={newKazhi} onChange={e=>setNewKazhi(e.target.value)} placeholder="17" /></div>
+          <button style={S.btn('primary')} onClick={addCount}>+ Add Mapping</button>
+        </div>
+        {cmMsg && <div style={{ fontSize:12, color:C.green, marginBottom:10 }}>{cmMsg}</div>}
+        <table style={{ width:'100%', borderCollapse:'collapse' }}>
+          <thead><tr><th style={S.th}>Count</th><th style={S.th}>Kazhi per Kattu</th><th style={{ ...S.th, textAlign:'right' }}>Action</th></tr></thead>
+          <tbody>
+            {countMap.map(cm=>(
+              <tr key={cm.id}>
+                <td style={{ ...S.td, fontWeight:800, color:C.gold }}>{cm.count}</td>
+                <td style={S.td}>{cm.kazhi}</td>
+                <td style={{ ...S.td, textAlign:'right' }}><button style={{ ...S.btn('danger'), padding:'4px 10px', fontSize:10 }} onClick={()=>removeCount(cm.id)}>Remove</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Company Profile Settings */}
+      <div style={S.section}>
+        <div style={S.secTitle}>🏢 Company Profile & Bank Details</div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14 }}>
+          <div><label style={S.label}>Company Name</label><input style={S.input} value={compEdit.name} onChange={e=>setCompEdit({...compEdit, name:e.target.value})} /></div>
+          <div><label style={S.label}>GSTIN</label><input style={S.input} value={compEdit.gstin} onChange={e=>setCompEdit({...compEdit, gstin:e.target.value})} /></div>
+          <div><label style={S.label}>Address</label><input style={S.input} value={compEdit.address} onChange={e=>setCompEdit({...compEdit, address:e.target.value})} /></div>
+          <div><label style={S.label}>Contact / Phone</label><input style={S.input} value={compEdit.contact} onChange={e=>setCompEdit({...compEdit, contact:e.target.value})} /></div>
+          <div><label style={S.label}>Bank Name</label><input style={S.input} value={compEdit.bankName} onChange={e=>setCompEdit({...compEdit, bankName:e.target.value})} /></div>
+          <div><label style={S.label}>Account Number</label><input style={S.input} value={compEdit.accountNo} onChange={e=>setCompEdit({...compEdit, accountNo:e.target.value})} /></div>
+          <div><label style={S.label}>IFSC Code</label><input style={S.input} value={compEdit.ifsc} onChange={e=>setCompEdit({...compEdit, ifsc:e.target.value})} /></div>
+          <div><label style={S.label}>Jurisdiction City</label><input style={S.input} value={compEdit.jurisdiction} onChange={e=>setCompEdit({...compEdit, jurisdiction:e.target.value})} /></div>
+        </div>
+        <button style={S.btn('primary')} onClick={saveCompanyProfile}>💾 Save Company Profile</button>
+      </div>
+    </div>
+  );
+}
+
+// ── DRIVE AUTH PAGE ───────────────────────────────────────────────────────────
+function DriveAuthPage({ onConnected }) {
+  const [step, setStep]         = useState(1);
+  const [authCode, setAuthCode] = useState('');
+  const [msg, setMsg]           = useState('');
+  const [loading, setLoading]   = useState(false);
+  const fileRef = useRef(null);
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      if (!json.installed) { setMsg('❌ Wrong file — "installed" key not found in client_secret.json!'); return; }
+      setLoading(true);
+      const res = await api.googleAuthStart(json);
+      if (res.success) {
+        setMsg('✅ Browser opened for Google login. Login and paste the auth code here.');
+        setStep(2);
+      } else {
+        setMsg(`❌ Error: ${res.error}`);
+      }
+    } catch (err) {
+      setMsg(`❌ JSON parse error: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCodeSubmit = async () => {
+    if (!authCode.trim()) { setMsg('❌ Enter Google Auth Code!'); return; }
+    setLoading(true);
+    try {
+      const res = await api.googleAuthExchange(authCode);
+      if (res.success) {
+        setMsg('✅ Connected! Google Drive is ready.');
+        setStep(3);
+        setTimeout(() => onConnected(), 1200);
+      } else {
+        setMsg(`❌ ${res.error}`);
+      }
+    } catch (err) {
+      setMsg(`❌ ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fade-in" style={{ maxWidth:580, margin:'40px auto' }}>
+      <div style={S.section}>
+        <div style={{ fontSize:36, marginBottom:12, textAlign:'center' }}>☁</div>
+        <div style={{ fontSize:20, fontWeight:800, color:C.gold, textAlign:'center', marginBottom:8 }}>Connect Google Drive</div>
+        <div style={{ fontSize:12, color:C.textMuted, textAlign:'center', marginBottom:26 }}>
+          One-time authentication to automatically sync your PDF bills to Google Drive.
+        </div>
+
+        <div style={{ background: step===1?'rgba(255,200,74,0.08)':'rgba(255,255,255,0.02)', border:`1px solid ${step===1?C.gold+'44':'rgba(255,255,255,0.08)'}`, borderRadius:10, padding:16, marginBottom:14 }}>
+          <div style={{ fontSize:11, color:step===1?C.gold:C.textMuted, fontWeight:700, letterSpacing:1.5, marginBottom:8 }}>STEP 1 — Upload client_secret.json</div>
+          {step === 1 ? (
+            <>
+              <p style={{ fontSize:12, color:C.textMuted, marginBottom:12 }}>Select your downloaded <b style={{ color:C.text }}>client_secret_*.json</b> file from Google Cloud Console.</p>
+              <input ref={fileRef} type="file" accept=".json" style={{ display:'none' }} onChange={handleFileUpload} />
+              <button style={S.btn('primary')} onClick={()=>fileRef.current.click()} disabled={loading}>
+                {loading ? '⟳ Processing...' : '📂 Choose JSON Secret'}
+              </button>
+            </>
+          ) : (
+            <div style={{ color:C.green, fontSize:12 }}>✅ Client Secret loaded</div>
+          )}
+        </div>
+
+        <div style={{ background: step===2?'rgba(255,200,74,0.08)':'rgba(255,255,255,0.02)', border:`1px solid ${step===2?C.gold+'44':'rgba(255,255,255,0.08)'}`, borderRadius:10, padding:16, marginBottom:14 }}>
+          <div style={{ fontSize:11, color:step>=2?C.gold:C.textMuted, fontWeight:700, letterSpacing:1.5, marginBottom:8 }}>STEP 2 — Enter Verification Code</div>
+          {step === 2 && (
+            <>
+              <p style={{ fontSize:12, color:C.textMuted, marginBottom:12 }}>Authorize in the browser window and paste the code below:</p>
+              <input style={{ ...S.input, marginBottom:10 }} value={authCode} onChange={e=>setAuthCode(e.target.value)} placeholder="4/0AX4XfWi..." />
+              <button style={S.btn('success')} onClick={handleCodeSubmit} disabled={loading}>
+                {loading ? '⟳ Verifying...' : '✓ Complete Drive Connection'}
+              </button>
+            </>
+          )}
+          {step > 2 && <div style={{ color:C.green, fontSize:12 }}>✅ Auth code verified</div>}
+          {step < 2 && <div style={{ color:C.textMuted, fontSize:12 }}>— Waiting for Step 1</div>}
+        </div>
+
+        {msg && (
+          <div style={{ marginTop:14, padding:'10px 14px', background:'rgba(255,255,255,0.05)', borderRadius:8, fontSize:12, color:msg.startsWith('✅')?C.green:C.red }}>
+            {msg}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── ROOT APP COMPONENT ────────────────────────────────────────────────────────
 function App() {
   const [tab, setTab]               = useState('dashboard');
   const [bills, setBills]           = useState([]);
   const [customers, setCustomers]   = useState(DEFAULT_CUSTOMERS);
   const [countMap, setCountMap]     = useState(DEFAULT_COUNT_MAP);
+  const [company, setCompany]       = useState(DEFAULT_COMPANY);
   const [driveConnected, setDrive]  = useState(false);
   const [folderId, setFolderId]     = useState('11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9');
   const [editBill, setEditBill]     = useState(null);
+  const [ledgerCustomer, setLedger] = useState(null);
   const [loaded, setLoaded]         = useState(false);
 
   useEffect(() => {
     (async () => {
-      const b  = await api.storeGet('sgc-bills');
-      const c  = await api.storeGet('sgc-customers');
-      const cm = await api.storeGet('sgc-countmap');
-      const fi = await api.storeGet('drive-folder-id');
-      if (b)  setBills(b);
-      if (c)  setCustomers(c);
-      if (cm) setCountMap(cm);
-      if (fi) setFolderId(fi);
+      const b   = await api.storeGet('sgc-bills');
+      const c   = await api.storeGet('sgc-customers');
+      const cm  = await api.storeGet('sgc-countmap');
+      const fi  = await api.storeGet('drive-folder-id');
+      const comp = await api.storeGet('sgc-company-profile');
+      if (b)    setBills(b);
+      if (c)    setCustomers(c);
+      if (cm)   setCountMap(cm);
+      if (fi)   setFolderId(fi);
+      if (comp) setCompany(comp);
       const { connected } = await api.googleAuthStatus();
       setDrive(connected);
       setLoaded(true);
@@ -1044,10 +2022,32 @@ function App() {
   const saveBill = async (bill) => {
     setBills(prev => {
       const exists = prev.find(b => b.id === bill.id);
-      const updated = exists ? prev.map(b=>b.id===bill.id?bill:b) : [...prev, bill];
+      const updated = exists ? prev.map(b => b.id === bill.id ? bill : b) : [...prev, bill];
       api.storeSet('sgc-bills', updated);
       return updated;
     });
+  };
+
+  const handleEditBill = (bill) => {
+    setEditBill(bill);
+    setTab('new');
+  };
+
+  const handleCloneBill = (bill) => {
+    const nextNo = bills.length > 0 ? Math.max(...bills.map(b=>Number(b.billNo)||0))+1 : 1;
+    const cloned = {
+      ...bill,
+      id: uid(),
+      billNo: nextNo,
+      date: today(),
+      status: 'pending',
+      payments: [],
+      driveUrl: null,
+      driveFileId: null,
+      items: (bill.items || []).map(it => ({ ...it, id: uid() })),
+    };
+    setEditBill(cloned);
+    setTab('new');
   };
 
   const handleDriveConnect = () => setTab('drive-auth');
@@ -1062,10 +2062,10 @@ function App() {
 
   if (!loaded) {
     return (
-      <div style={{ ...S.app, display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ ...S.app, display:'flex', alignItems:'center', justifyContent:'center', minHeight:'100vh' }}>
         <div style={{ textAlign:'center' }}>
-          <div style={{ fontSize:32, marginBottom:12, animation:'spin 1s linear infinite', display:'inline-block' }}>⟳</div>
-          <div style={{ color:C.muted, fontSize:13, letterSpacing:2 }}>LOADING...</div>
+          <div style={{ fontSize:36, marginBottom:14, animation:'spin 1s linear infinite', display:'inline-block' }}>⟳</div>
+          <div style={{ color:C.gold, fontSize:13, letterSpacing:3, fontWeight:700 }}>LOADING SGC BILLING...</div>
         </div>
       </div>
     );
@@ -1073,31 +2073,45 @@ function App() {
 
   const tabs = [
     ['dashboard', 'Dashboard'],
-    ['new',       'New Bill'],
+    ['new',       editBill ? 'Edit Bill ✎' : 'New Bill +'],
     ['bills',     'All Bills'],
     ['customers', 'Customers'],
+    ['analytics', 'Analytics & Reports'],
     ['settings',  'Settings'],
   ];
 
   return (
     <div style={S.app}>
       <nav style={S.nav}>
-        <div style={S.navBrand}>SGC Billing</div>
+        <div style={S.navBrand}>
+          <span style={{ fontSize:18 }}>⚡</span> SGC Billing
+        </div>
         {tabs.map(([v,l]) => (
-          <button key={v} style={S.navTab(tab===v)} onClick={()=>{ setTab(v); if(v==='new') setEditBill(null); }}>{l}</button>
+          <button key={v} style={S.navTab(tab===v)} onClick={()=>{
+            setTab(v);
+            if (v === 'new' && !editBill) setEditBill(null);
+          }}>{l}</button>
         ))}
-        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:8, padding:'8px 0' }}>
-          <span style={S.badge(driveConnected?'drive':'orange')}>{driveConnected?'☁ Drive Ready':'⚠ Drive Offline'}</span>
+        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:10, padding:'10px 0' }}>
+          <span style={S.badge(driveConnected?'drive':'orange')}>
+            {driveConnected ? '☁ Drive Connected' : '⚠ Drive Offline'}
+          </span>
         </div>
       </nav>
+
       <main style={S.main}>
-        {tab==='dashboard'  && <Dashboard bills={bills} />}
-        {tab==='new'        && <NewBillForm customers={customers} bills={bills} countMap={countMap} onSave={saveBill} editBill={editBill} driveConnected={driveConnected} />}
-        {tab==='bills'      && <BillsList bills={bills} setBills={setBills} onSave={saveBill} />}
-        {tab==='customers'  && <CustomersPage customers={customers} bills={bills} setCustomers={setCustomers} />}
-        {tab==='settings'   && <SettingsPage countMap={countMap} setCountMap={setCountMap} driveConnected={driveConnected} onDriveConnect={handleDriveConnect} onDriveDisconnect={handleDriveDisconnect} folderId={folderId} setFolderId={setFolderId} />}
+        {tab==='dashboard'  && <Dashboard bills={bills} onNewBill={()=>{ setEditBill(null); setTab('new'); }} onShowLedger={c=>setLedger(c)} customers={customers} company={company} />}
+        {tab==='new'        && <NewBillForm customers={customers} bills={bills} countMap={countMap} onSave={saveBill} editBill={editBill} onCancelEdit={()=>{ setEditBill(null); setTab('bills'); }} driveConnected={driveConnected} company={company} />}
+        {tab==='bills'      && <BillsList bills={bills} setBills={setBills} onEditBill={handleEditBill} onCloneBill={handleCloneBill} customers={customers} company={company} />}
+        {tab==='customers'  && <CustomersPage customers={customers} bills={bills} setCustomers={setCustomers} onShowLedger={c=>setLedger(c)} />}
+        {tab==='analytics'  && <AnalyticsPage bills={bills} customers={customers} />}
+        {tab==='settings'   && <SettingsPage countMap={countMap} setCountMap={setCountMap} driveConnected={driveConnected} onDriveConnect={handleDriveConnect} onDriveDisconnect={handleDriveDisconnect} folderId={folderId} setFolderId={setFolderId} company={company} setCompany={setCompany} bills={bills} setBills={setBills} customers={customers} setCustomers={setCustomers} />}
         {tab==='drive-auth' && <DriveAuthPage onConnected={handleConnected} />}
       </main>
+
+      {ledgerCustomer && (
+        <CustomerLedgerModal customer={ledgerCustomer} bills={bills} onClose={()=>setLedger(null)} onEditBill={handleEditBill} company={company} />
+      )}
     </div>
   );
 }

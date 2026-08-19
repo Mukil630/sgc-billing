@@ -9,12 +9,14 @@ let mainWindow;
 
 // ── CREATE WINDOW ─────────────────────────────────────────────────────────────
 function createWindow() {
+  const iconPath = path.join(__dirname, 'assets', 'icon.ico');
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1000,
-    minHeight: 700,
+    width: 1440,
+    height: 920,
+    minWidth: 1024,
+    minHeight: 720,
     title: 'SGC Billing — Sri Ganapathi Colours',
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -48,43 +50,64 @@ ipcMain.handle('store-set', async (_, key, value) => {
   return true;
 });
 
-// ── SAVE & UPLOAD BILL (PDF via Puppeteer → Google Drive) ─────────────────────
-ipcMain.handle('save-and-upload-bill', async (_, { billData, htmlContent }) => {
+// ── HELPER: GENERATE PDF BUFFER ───────────────────────────────────────────────
+async function generatePdfBuffer(htmlContent) {
+  // 1. Try Native Electron printToPDF (Fast, ultra-reliable, zero puppeteer extra setup)
   try {
-    // 1. Generate PDF using Puppeteer
+    const pdfWin = new BrowserWindow({
+      width: 900,
+      height: 1200,
+      show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    });
+    await pdfWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+    await new Promise((r) => setTimeout(r, 450));
+    const pdfBuffer = await pdfWin.webContents.printToPDF({
+      margins: { top: 0.3, bottom: 0.3, left: 0.25, right: 0.25 },
+      printBackground: true,
+      pageSize: 'A4',
+    });
+    pdfWin.close();
+    return pdfBuffer;
+  } catch (nativeErr) {
+    console.warn('Native PDF error, trying Puppeteer fallback:', nativeErr);
+    // 2. Puppeteer fallback
     const puppeteer = require('puppeteer');
-    const { google } = require('googleapis');
-
     const browser = await puppeteer.launch({
       headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
-
     const page = await browser.newPage();
     await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
-
     const pdfBuffer = await page.pdf({
       format: 'A4',
       printBackground: true,
       margin: { top: '10mm', bottom: '10mm', left: '8mm', right: '8mm' },
     });
-
     await browser.close();
+    return pdfBuffer;
+  }
+}
 
-    // 2. Get stored OAuth tokens
+// ── SAVE & UPLOAD BILL (PDF → Google Drive) ───────────────────────────────────
+ipcMain.handle('save-and-upload-bill', async (_, { billData, htmlContent }) => {
+  try {
+    const pdfBuffer = await generatePdfBuffer(htmlContent);
+
+    // Get stored OAuth tokens
     const tokens = store.get('google-tokens', null);
     const clientSecret = store.get('google-client-secret', null);
 
     if (!tokens || !clientSecret) {
-      return { success: false, error: 'Google Drive not authenticated. Please connect Drive first.' };
+      return { success: false, error: 'Google Drive not authenticated. Please connect Drive in Settings.' };
     }
 
-    // 3. Setup Google Drive OAuth2
+    const { google } = require('googleapis');
     const { installed } = clientSecret;
     const oAuth2Client = new google.auth.OAuth2(
       installed.client_id,
       installed.client_secret,
-      installed.redirect_uris[0]
+      installed.redirect_uris ? installed.redirect_uris[0] : 'urn:ietf:wg:oauth:2.0:oob'
     );
     oAuth2Client.setCredentials(tokens);
 
@@ -94,7 +117,6 @@ ipcMain.handle('save-and-upload-bill', async (_, { billData, htmlContent }) => {
       store.set('google-tokens', { ...current, ...newTokens });
     });
 
-    // 4. Upload PDF to Google Drive
     const drive = google.drive({ version: 'v3', auth: oAuth2Client });
     const FOLDER_ID = store.get('drive-folder-id', '11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9');
 
@@ -130,9 +152,72 @@ ipcMain.handle('save-and-upload-bill', async (_, { billData, htmlContent }) => {
       fileId,
       fileName,
     };
-
   } catch (err) {
     console.error('save-and-upload-bill error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// ── SAVE LOCAL PDF ────────────────────────────────────────────────────────────
+ipcMain.handle('save-local-pdf', async (_, { billData, htmlContent }) => {
+  try {
+    const safeName = (billData.customer || 'Customer')
+      .replace(/[^a-zA-Z0-9 ]/g, '_')
+      .slice(0, 40)
+      .trim();
+    const defaultFileName = `Bill_${String(billData.billNo).padStart(4, '0')}_${safeName}.pdf`;
+
+    const { filePath, canceled } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Bill PDF to Computer',
+      defaultPath: path.join(app.getPath('downloads'), defaultFileName),
+      filters: [{ name: 'PDF Documents', extensions: ['pdf'] }],
+    });
+
+    if (canceled || !filePath) return { success: false, canceled: true };
+
+    const pdfBuffer = await generatePdfBuffer(htmlContent);
+    fs.writeFileSync(filePath, pdfBuffer);
+    return { success: true, filePath };
+  } catch (err) {
+    console.error('save-local-pdf error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// ── EXPORT FILE (CSV / JSON) ──────────────────────────────────────────────────
+ipcMain.handle('export-file', async (_, { defaultName, content, extension }) => {
+  try {
+    const ext = extension || 'csv';
+    const { filePath, canceled } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export File',
+      defaultPath: path.join(app.getPath('downloads'), defaultName),
+      filters: [{ name: `${ext.toUpperCase()} Files`, extensions: [ext] }],
+    });
+
+    if (canceled || !filePath) return { success: false, canceled: true };
+
+    fs.writeFileSync(filePath, content, 'utf8');
+    return { success: true, filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ── IMPORT BACKUP FILE ────────────────────────────────────────────────────────
+ipcMain.handle('import-file', async () => {
+  try {
+    const { filePaths, canceled } = await dialog.showOpenDialog(mainWindow, {
+      title: 'Select SGC Billing Backup JSON File',
+      filters: [{ name: 'JSON Backup (*.json)', extensions: ['json'] }],
+      properties: ['openFile'],
+    });
+
+    if (canceled || !filePaths || filePaths.length === 0) return { success: false, canceled: true };
+
+    const raw = fs.readFileSync(filePaths[0], 'utf8');
+    const data = JSON.parse(raw);
+    return { success: true, data, fileName: path.basename(filePaths[0]) };
+  } catch (err) {
     return { success: false, error: err.message };
   }
 });
@@ -171,6 +256,9 @@ ipcMain.handle('google-auth-exchange', async (_, authCode) => {
   try {
     const { google } = require('googleapis');
     const clientSecretData = store.get('google-client-secret');
+    if (!clientSecretData || !clientSecretData.installed) {
+      return { success: false, error: 'Client secret not found. Please upload client_secret.json again.' };
+    }
     const { installed } = clientSecretData;
 
     const oAuth2Client = new google.auth.OAuth2(
@@ -205,13 +293,13 @@ ipcMain.handle('open-external', async (_, url) => {
   return true;
 });
 
-// ── PRINT BILL (open print dialog) ───────────────────────────────────────────
+// ── PRINT BILL ────────────────────────────────────────────────────────────────
 ipcMain.handle('print-bill', async (_, htmlContent) => {
   const printWin = new BrowserWindow({
     width: 900,
     height: 700,
     show: true,
-    title: 'Print Bill',
+    title: 'Print Bill — Sri Ganapathi Colours',
     webPreferences: { nodeIntegration: false, contextIsolation: true },
   });
   printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);

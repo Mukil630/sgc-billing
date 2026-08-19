@@ -1,110 +1,61 @@
-# SGC Billing — Sri Ganapathi Colours
-<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/07d6ebf3-6530-462f-a97b-07c2a78eacd0" />
+# SGC Billing v5.0 — Sri Ganapathi Colours
+<img width="1774" height="887" alt="SGC Billing Dashboard" src="https://github.com/user-attachments/assets/07d6ebf3-6530-462f-a97b-07c2a78eacd0" />
 
-## Electron Desktop App — Setup Guide
-
----
-
-## 📦 Prerequisites (oru thadavai mattum install pannunga)
-
-1. **Node.js** download: https://nodejs.org (LTS version)
-2. **Git** (optional)
+Enterprise Billing, GST Invoicing, Customer Ledger & Financial Management System tailored for Textile Dyeing & Bleaching Units.
 
 ---
 
-## 🚀 Installation Steps
+## 🌟 New Features in v5.0
 
-### Step 1 — Files extract pannunga
-```
-sgc-billing/ folder-a ungal system la vaikunga (e.g. C:\SGC-Billing\)
-```
+1. **💬 Instant WhatsApp Invoicing & Payment Reminders**:
+   - Send complete invoice summaries, bank details, balance due, and PDF links directly to party WhatsApp with a single click.
+2. **👥 Customer Account Ledger & Statements (கணக்கு பேரேடு)**:
+   - Real-time customer outstanding balances, total invoiced vs total received, and printable A4 Party Statements.
+3. **💵 Partial Payment Tracking & Payment History**:
+   - Record multiple installment payments (GPay/UPI, NEFT/Bank, Cash, Cheque) with receipts and automatic balance tracking.
+4. **📊 GSTR-1 Ready Sales Register (Excel / CSV Export)**:
+   - One-click export for CA / Tax auditor with taxable values, CGST (2.5%), SGST (2.5%), and invoice amounts.
+5. **✏️ Bill Edit & Instant Clone/Duplicate**:
+   - Modify existing bills or duplicate recurring orders to new bills in seconds.
+6. **📈 Financial Intelligence & Analytics**:
+   - Visual monthly revenue trends, top revenue customers, yarn count volume tracking (10s, 17s, 20s, 30s), and overdue aging.
+7. **💾 Dual PDF Engine (Cloud Drive + Offline Local Save)**:
+   - Direct local PDF download without cloud delays, plus automated Google Drive sync.
+8. **🛡️ 1-Click System Backup & Restore**:
+   - Download complete database snapshots (`.json`) and restore seamlessly on any machine.
 
-### Step 2 — Terminal open pannunga
-```
-Windows: Win+R → cmd → Enter
-cd C:\SGC-Billing\sgc-billing
-```
+---
 
-### Step 3 — Dependencies install pannunga
+## 📦 Quick Start Guide
+
+### Step 1 — Install Dependencies (One time)
 ```bash
 npm install
 ```
-*(5-10 minutes aagum — puppeteer chromium download aagum)*
 
-### Step 4 — App start pannunga
+### Step 2 — Run in Desktop Mode (Electron)
 ```bash
 npm start
 ```
 
----
-
-## ☁ Google Drive Connect Pannuvadu Eppadi?
-
-### Oru thadavai mattum pannanum:
-
-1. **App open aaguthu** → Settings tab → "Connect Drive →" click pannunga
-
-2. **client_secret.json upload pannunga**
-   - Ungalukku already file iruku: `client_secret_501766030810-....json`
-   - Antha file-a select pannunga
-
-3. **Browser la Google login page open aagum**
-   - Ungal Google account la login pannunga
-   - "Allow" click pannunga
-   - **Code copy pannunga** (browser la kaatum)
-
-4. **Code paste pannunga** → "Connect Drive" click
-
-5. **Done!** — Ippo bill save pannumbodhu automatic-a PDF → Drive upload aagum ✅
+### Step 3 — Run in Web Browser Mode
+```bash
+npm run web
+```
+Opens automatically at `http://localhost:3000`.
 
 ---
 
-## 💾 .exe Build Pannuvadu (optional)
-
+## 💾 Build Windows Desktop Installer (.exe)
 ```bash
 npm run build
 ```
-`dist/` folder la `.exe` installer kidaikkum.
+Generates the Windows installer in the `dist/` directory and creates the Desktop shortcut.
 
 ---
 
-## 📋 How It Works
-
-```
-Save Button Click
-      ↓
-Bill data collect (React UI)
-      ↓
-HTML string generate
-      ↓
-Puppeteer → HTML to PDF (background la, user-ku teriyaadu)
-      ↓
-Google Drive API → PDF upload (Bill_0001_CustomerName.pdf)
-      ↓
-Drive link save → UI la show
-```
-
----
-
-## 🔧 Folder Structure
-
-```
-sgc-billing/
-├── main.js          ← Electron main (Puppeteer + Drive API here)
-├── preload.js       ← Secure bridge
-├── package.json
-└── public/
-    └── index.html   ← Full React app (UI)
-```
-
----
-
-## ❓ Common Issues
-
-**"npm not found"** → Node.js install pannala — https://nodejs.org
-
-**"Puppeteer download slow"** → Wait pannunga, chromium download aaguthu
-
-**"Drive upload failed"** → Settings → Drive reconnect pannunga
-
-**App open aagalai** → `npm start` run panni terminal-la error parunga
+## ☁ Google Drive Setup
+1. Open App → **Settings** → **Connect Drive →**
+2. Upload your `client_secret.json`
+3. Sign in to your Google Account and paste the authorization code.
+4. All generated bills will automatically upload as PDFs to your Google Drive folder.

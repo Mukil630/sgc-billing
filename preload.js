@@ -6,8 +6,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storeGet: (key) => ipcRenderer.invoke('store-get', key),
   storeSet: (key, value) => ipcRenderer.invoke('store-set', key, value),
 
-  // Bill save + Drive upload
+  // Bill save + Drive upload + Local PDF
   saveAndUploadBill: (payload) => ipcRenderer.invoke('save-and-upload-bill', payload),
+  saveLocalPdf: (payload) => ipcRenderer.invoke('save-local-pdf', payload),
+  exportFile: (payload) => ipcRenderer.invoke('export-file', payload),
+  importFile: () => ipcRenderer.invoke('import-file'),
 
   // Google OAuth
   googleAuthStart: (clientSecret) => ipcRenderer.invoke('google-auth-start', clientSecret),

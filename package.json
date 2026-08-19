@@ -1,11 +1,12 @@
 {
   "name": "sgc-billing",
-  "version": "1.0.0",
-  "description": "SGC Billing - Sri Ganapathi Colours",
+  "version": "5.0.0",
+  "description": "SGC Billing - Sri Ganapathi Colours Enterprise Invoice & Ledger System",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "web": "node dev-server.js",
     "build": "electron-builder --win --x64",
     "pack": "electron-builder --dir"
   },
