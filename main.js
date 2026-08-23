@@ -118,7 +118,12 @@ ipcMain.handle('save-and-upload-bill', async (_, { billData, htmlContent }) => {
     });
 
     const drive = google.drive({ version: 'v3', auth: oAuth2Client });
-    const FOLDER_ID = store.get('drive-folder-id', '11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9');
+    
+    // Hardcoded Dual Drive Folders for Storing Each Bill
+    const DRIVE_FOLDERS = [
+      '155EqYOwPJ2Fc9QfqVSrZu5VnYzZgRcyZ',
+      '1a9VJAP_Nypn_mjUEYCNvMpkGN5H9Kwf4'
+    ];
 
     const safeName = (billData.customer || 'Customer')
       .replace(/[^a-zA-Z0-9 ]/g, '_')
@@ -127,29 +132,46 @@ ipcMain.handle('save-and-upload-bill', async (_, { billData, htmlContent }) => {
     const fileName = `Bill_${String(billData.billNo).padStart(4, '0')}_${safeName}.pdf`;
 
     const { Readable } = require('stream');
-    const pdfStream = Readable.from(pdfBuffer);
 
-    const driveRes = await drive.files.create({
-      requestBody: {
-        name: fileName,
-        mimeType: 'application/pdf',
-        parents: [FOLDER_ID],
-      },
-      media: {
-        mimeType: 'application/pdf',
-        body: pdfStream,
-      },
-      fields: 'id, webViewLink, name',
-    });
+    let mainFileId = null;
+    let mainWebViewLink = null;
+    const uploadErrors = [];
 
-    const fileId = driveRes.data.id;
-    const webViewLink = driveRes.data.webViewLink ||
-      `https://drive.google.com/file/d/${fileId}/view`;
+    for (const folderId of DRIVE_FOLDERS) {
+      try {
+        const pdfStream = Readable.from(pdfBuffer);
+        const driveRes = await drive.files.create({
+          requestBody: {
+            name: fileName,
+            mimeType: 'application/pdf',
+            parents: [folderId],
+          },
+          media: {
+            mimeType: 'application/pdf',
+            body: pdfStream,
+          },
+          fields: 'id, webViewLink, name',
+        });
+
+        if (!mainFileId) {
+          mainFileId = driveRes.data.id;
+          mainWebViewLink = driveRes.data.webViewLink ||
+            `https://drive.google.com/file/d/${mainFileId}/view`;
+        }
+      } catch (folderErr) {
+        console.error(`Error uploading bill to folder ${folderId}:`, folderErr);
+        uploadErrors.push(`Folder ${folderId}: ${folderErr.message}`);
+      }
+    }
+
+    if (!mainFileId && uploadErrors.length > 0) {
+      return { success: false, error: uploadErrors.join('; ') };
+    }
 
     return {
       success: true,
-      driveUrl: webViewLink,
-      fileId,
+      driveUrl: mainWebViewLink,
+      fileId: mainFileId,
       fileName,
     };
   } catch (err) {
