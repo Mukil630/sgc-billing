@@ -1,28 +1,39 @@
-# SGC Billing v5.0 — Sri Ganapathi Colours
+# SGC Billing v6.0 — Sri Ganapathi Colours Enterprise Suite
 <img width="1774" height="887" alt="SGC Billing Dashboard" src="https://github.com/user-attachments/assets/07d6ebf3-6530-462f-a97b-07c2a78eacd0" />
 
 Enterprise Billing, GST Invoicing, Customer Ledger & Financial Management System tailored for Textile Dyeing & Bleaching Units.
 
 ---
 
-## 🌟 New Features in v5.0
+## 🌟 New Features in v6.0
 
-1. **💬 Instant WhatsApp Invoicing & Payment Reminders**:
+1. **📁 Autonomous Month-Wise Google Drive Vault Allocation**:
+   - Invoices are automatically categorized and routed into chronological month subfolders (e.g. `2026-05 (May 2026)`, `2026-07 (July 2026)`, `2026-09 (September 2026)`).
+   - Zero lost files with 100% cloud redundancy across 3 distributed vault mirrors.
+
+2. **🏛️ Monthly GST Tax Radar & Bill-by-Bill Breakdown**:
+   - Auto-aggregates CGST (2.50%), SGST (2.50%), and Total GST (5.00%) across all invoices of the month for GSTR-3B and GSTR-1 filing.
+   - Dedicated interactive table showing each bill's individual GST amounts with a single-click WhatsApp export for the CA / Tax Auditor.
+
+3. **📱 Telegram AI Mobile Control Plane**:
+   - `/gst` — Interactive GST Control Center with Inline Buttons to toggle months, download GSTR-1 CSV directly into chat, and forward tax data to CA.
+   - `/bill` — Generate official tax invoices with Dynamic UPI QR codes (CSB Bank / GPay / PhonePe) directly from mobile on the factory floor.
+   - `/overdue` — Real-time customer balance radar with automated Tamil/English payment reminder templates.
+
+4. **💬 Instant WhatsApp Invoicing & Payment Reminders**:
    - Send complete invoice summaries, bank details, balance due, and PDF links directly to party WhatsApp with a single click.
-2. **👥 Customer Account Ledger & Statements (கணக்கு பேரேடு)**:
+
+5. **👥 Customer Account Ledger & Statements (கணக்கு பேரேடு)**:
    - Real-time customer outstanding balances, total invoiced vs total received, and printable A4 Party Statements.
-3. **💵 Partial Payment Tracking & Payment History**:
+
+6. **💵 Partial Payment Tracking & Payment History**:
    - Record multiple installment payments (GPay/UPI, NEFT/Bank, Cash, Cheque) with receipts and automatic balance tracking.
-4. **📊 GSTR-1 Ready Sales Register (Excel / CSV Export)**:
+
+7. **📊 GSTR-1 Ready Sales Register (Excel / CSV Export)**:
    - One-click export for CA / Tax auditor with taxable values, CGST (2.5%), SGST (2.5%), and invoice amounts.
-5. **✏️ Bill Edit & Instant Clone/Duplicate**:
-   - Modify existing bills or duplicate recurring orders to new bills in seconds.
-6. **📈 Financial Intelligence & Analytics**:
-   - Visual monthly revenue trends, top revenue customers, yarn count volume tracking (10s, 17s, 20s, 30s), and overdue aging.
-7. **💾 Dual PDF Engine (Cloud Drive + Offline Local Save)**:
-   - Direct local PDF download without cloud delays, plus automated Google Drive sync.
-8. **🛡️ 1-Click System Backup & Restore**:
-   - Download complete database snapshots (`.json`) and restore seamlessly on any machine.
+
+8. **📈 Financial Intelligence & Analytics**:
+   - Visual monthly revenue trends, top revenue customers, yarn count volume tracking (10s, 2/30s, 2/40s), and overdue aging.
 
 ---
 

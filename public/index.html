@@ -32,8 +32,14 @@ const isElectron = !!window.electronAPI;
 const api = window.electronAPI || {
   storeGet: async (k) => { try { const r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } catch { return null; } },
   storeSet: async (k, v) => { localStorage.setItem(k, JSON.stringify(v)); },
-  saveAndUploadBill: async ({ billData }) => ({ success: true, browserSaved: true, message: 'Saved in local storage' }),
-  saveLocalPdf: async ({ billData, htmlContent }) => {
+   saveAndUploadBill: async ({ billData }) => ({ success: true, browserSaved: true, message: 'Saved in local storage' }),
+  syncAllBills: async ({ billPayloads }) => ({ success: true, summary: { total: billPayloads.length, synced: billPayloads.length, updated: 0, failed: 0, results: [] } }),
+  gmailAuthStart: async () => ({ success: true, message: 'Gmail auth requires Electron desktop app' }),
+  gmailAuthExchange: async () => ({ success: false, error: 'Gmail auth requires Electron desktop app' }),
+  gmailAuthStatus: async () => ({ connected: false }),
+  gmailAuthDisconnect: async () => ({ success: true }),
+  gmailScan: async () => ({ success: false, error: 'Gmail sync requires Electron desktop app' }),
+   saveLocalPdf: async ({ billData, htmlContent }) => {
     const printWin = window.open('', '_blank', 'width=900,height=800');
     if (printWin) {
       printWin.document.open();
@@ -44,6 +50,7 @@ const api = window.electronAPI || {
     }
     return { success: false, error: 'Popup blocked' };
   },
+  organizeDriveBills: async () => ({ success: true, report: { total: 0, moved: 0, alreadyInPlace: 0 } }),
   exportFile: async ({ defaultName, content, extension }) => {
     const blob = new Blob([content], { type: extension === 'json' ? 'application/json' : 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -935,7 +942,14 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
     if (driveConnected) {
       const result = await api.saveAndUploadBill({ billData: bill, htmlContent });
       if (result.success) {
-        const billWithUrl = { ...bill, driveUrl: result.driveUrl, driveFileId: result.fileId };
+        const billWithUrl = {
+          ...bill,
+          driveUrl: result.driveUrl,
+          driveFileId: result.fileId,
+          vaultFiles: result.vaultFiles,
+          monthFolder: result.monthFolderName,
+          monthFolderId: result.monthFolderId
+        };
         await onSave(billWithUrl);
         setDriveUrl(result.driveUrl);
         setUpload('done');
@@ -1206,11 +1220,14 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
 
 // ── BILLS LIST ────────────────────────────────────────────────────────────────
 function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, company }) {
-  const [filter, setFilter]         = useState('all');
-  const [dateFilter, setDateFilter] = useState('all');
-  const [search, setSearch]         = useState('');
-  const [payModal, setPayModal]     = useState(null);
-  const [syncingId, setSyncId]      = useState(null);
+  const [filter, setFilter]               = useState('all');
+  const [dateFilter, setDateFilter]       = useState('all');
+  const [selectedMonth, setSelectedMonth] = useState('all');
+  const [search, setSearch]               = useState('');
+  const [payModal, setPayModal]           = useState(null);
+  const [syncingId, setSyncId]            = useState(null);
+  const [organizingDrive, setOrganizing]  = useState(false);
+  const [orgMessage, setOrgMessage]       = useState('');
 
   const confirmPaid = async (updatedPayments) => {
     const totalPaid = updatedPayments.reduce((s, p) => s + Number(p.amount || 0), 0);
@@ -1238,7 +1255,14 @@ function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, compan
     setSyncId(bill.id);
     const result = await api.saveAndUploadBill({ billData: bill, htmlContent: generateBillHTML(bill, company) });
     if (result.success) {
-      const u = bills.map(b => b.id === bill.id ? { ...b, driveUrl: result.driveUrl, driveFileId: result.fileId } : b);
+      const u = bills.map(b => b.id === bill.id ? {
+        ...b,
+        driveUrl: result.driveUrl,
+        driveFileId: result.fileId,
+        vaultFiles: result.vaultFiles,
+        monthFolder: result.monthFolderName || b.monthFolder,
+        monthFolderId: result.monthFolderId || b.monthFolderId,
+      } : b);
       setBills(u);
       await api.storeSet('sgc-bills', u);
     }
@@ -1247,12 +1271,54 @@ function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, compan
 
   const handleDownloadCSV = async () => {
     const csvContent = exportBillsToCSV(list);
+    const fileNameSuffix = selectedMonth !== 'all' ? `_${selectedMonth}` : `_${today()}`;
     await api.exportFile({
-      defaultName: `SGC_Bills_Export_${today()}.csv`,
+      defaultName: `SGC_Bills_Export${fileNameSuffix}.csv`,
       content: csvContent,
       extension: 'csv',
     });
   };
+
+  const handleOrganizeDrive = async () => {
+    setOrganizing(true);
+    setOrgMessage('Organizing Drive folders...');
+    try {
+      const res = await api.organizeDriveBills();
+      if (res.success) {
+        setOrgMessage(`✅ Organized! Moved ${res.report?.moved || 0} bills, ${res.report?.alreadyInPlace || 0} already in month folders.`);
+      } else {
+        setOrgMessage(`⚠ ${res.error || 'Failed to organize'}`);
+      }
+    } catch (e) {
+      setOrgMessage(`⚠ ${e.message}`);
+    }
+    setOrganizing(false);
+    setTimeout(() => setOrgMessage(''), 5000);
+  };
+
+  // Month Folders Breakdown
+  const monthFolders = useMemo(() => {
+    const map = {};
+    bills.forEach(b => {
+      const ym = (b.date || '').slice(0, 7);
+      if (!ym) return;
+      if (!map[ym]) {
+        const [y, m] = ym.split('-');
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const fullNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const mIdx = parseInt(m, 10) - 1;
+        const label = `${monthNames[mIdx] || m} ${y}`;
+        const folderName = `${y}-${m} (${fullNames[mIdx] || m} ${y})`;
+        map[ym] = { key: ym, label, folderName, count: 0, total: 0, paid: 0, pending: 0 };
+      }
+      map[ym].count++;
+      map[ym].total += Number(b.netAmount || 0);
+      const fin = getBillFinancials(b);
+      map[ym].paid += fin.totalPaid;
+      map[ym].pending += fin.balance;
+    });
+    return Object.values(map).sort((a, b) => b.key.localeCompare(a.key));
+  }, [bills]);
 
   // Filtering
   const now = new Date();
@@ -1265,6 +1331,8 @@ function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, compan
     if (filter === 'paid'    && fin.computedStatus !== 'paid') return false;
     if (filter === 'pending' && fin.computedStatus !== 'pending') return false;
     if (filter === 'partial' && fin.computedStatus !== 'partial') return false;
+
+    if (selectedMonth !== 'all' && (!b.date || !b.date.startsWith(selectedMonth))) return false;
 
     if (dateFilter === 'this-month' && (!b.date || !b.date.startsWith(currentMonth))) return false;
     if (dateFilter === 'last-month' && (!b.date || !b.date.startsWith(lastMonth))) return false;
@@ -1291,13 +1359,121 @@ function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, compan
 
       {/* Top Banner */}
       <div style={{ background:'rgba(52,168,83,0.08)', border:'1px solid rgba(52,168,83,0.3)', borderRadius:12, padding:'12px 18px', marginBottom:18, display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:10 }}>
-        <div style={{ fontSize:12, color:C.drive, fontWeight:600 }}>
-          ☁ {syncedCount} of {bills.length} bills backed up to Google Drive PDF
+        <div style={{ fontSize:12, color:C.drive, fontWeight:600, display:'flex', alignItems:'center', gap:8 }}>
+          <span>☁ {syncedCount} of {bills.length} bills backed up to Google Drive PDF (Month-Wise Folders)</span>
+          {orgMessage && <span style={{ color:C.gold, fontSize:11, marginLeft:10 }}>{orgMessage}</span>}
         </div>
-        <button style={{ ...S.btn('success'), padding:'6px 14px', fontSize:10 }} onClick={handleDownloadCSV}>
-          📊 Export Bills (Excel / CSV)
-        </button>
+        <div style={{ display:'flex', gap:8 }}>
+          <button style={{ ...S.btn('drive'), padding:'6px 12px', fontSize:10 }} onClick={handleOrganizeDrive} disabled={organizingDrive}>
+            {organizingDrive ? '⟳ Organizing...' : '📁 Sync Month Folders'}
+          </button>
+          <button style={{ ...S.btn('success'), padding:'6px 14px', fontSize:10 }} onClick={handleDownloadCSV}>
+            📊 Export Bills (Excel / CSV)
+          </button>
+        </div>
       </div>
+
+      {/* Month Folders Selector Bar */}
+      <div style={{ display:'flex', gap:8, overflowX:'auto', paddingBottom:8, marginBottom:16, alignItems:'center' }}>
+        <div style={{ fontSize:11, fontWeight:700, color:C.gold, display:'flex', alignItems:'center', gap:5, whiteSpace:'nowrap', marginRight:4 }}>
+          <span>📁 MONTH FOLDERS:</span>
+        </div>
+        <button
+          style={{
+            ...S.btn(selectedMonth === 'all' ? 'primary' : ''),
+            padding: '7px 14px',
+            fontSize: 11,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            borderRadius: 8,
+            whiteSpace: 'nowrap',
+            fontWeight: selectedMonth === 'all' ? 700 : 500
+          }}
+          onClick={() => setSelectedMonth('all')}
+        >
+          <span>📁 All Months</span>
+          <span style={{ background:'rgba(255,255,255,0.15)', borderRadius:10, padding:'1px 6px', fontSize:10 }}>{bills.length}</span>
+        </button>
+        {monthFolders.map(mf => (
+          <button
+            key={mf.key}
+            style={{
+              ...S.btn(selectedMonth === mf.key ? 'blue' : ''),
+              background: selectedMonth === mf.key ? 'linear-gradient(135deg, #1e4d8c 0%, #2563eb 100%)' : 'rgba(255,255,255,0.04)',
+              border: selectedMonth === mf.key ? '1px solid #60a5fa' : '1px solid rgba(255,255,255,0.08)',
+              padding: '7px 14px',
+              fontSize: 11,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              borderRadius: 8,
+              whiteSpace: 'nowrap',
+              color: selectedMonth === mf.key ? '#fff' : C.textMuted,
+              fontWeight: selectedMonth === mf.key ? 700 : 500
+            }}
+            onClick={() => setSelectedMonth(mf.key)}
+          >
+            <span>📁 {mf.label}</span>
+            <span style={{ background: selectedMonth === mf.key ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', borderRadius:10, padding:'1px 6px', fontSize:10, color:'#fff' }}>
+              {mf.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Active Month Folder Overview Card (when a month is selected) */}
+      {selectedMonth !== 'all' && (() => {
+        const curMf = monthFolders.find(m => m.key === selectedMonth);
+        if (!curMf) return null;
+        return (
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(30,77,140,0.35) 0%, rgba(15,36,71,0.55) 100%)',
+            border: '1px solid rgba(59,130,246,0.4)',
+            borderRadius: 12,
+            padding: '14px 18px',
+            marginBottom: 18,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 12
+          }}>
+            <div>
+              <div style={{ fontSize: 10.5, color: '#93c5fd', fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase' }}>
+                📁 ALLOCATED GOOGLE DRIVE FOLDER:
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                <span>{curMf.folderName}</span>
+                <span style={{ fontSize: 11, background: 'rgba(59,130,246,0.25)', color: '#93c5fd', padding: '2px 8px', borderRadius: 6 }}>
+                  {curMf.count} Bills
+                </span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 10, color: C.textMuted }}>Billed</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{fmtINR(curMf.total)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: C.textMuted }}>Collected</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.green }}>{fmtINR(curMf.paid)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: C.textMuted }}>Balance Due</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: curMf.pending > 0 ? C.red : C.green }}>{fmtINR(curMf.pending)}</div>
+              </div>
+              <button
+                style={{ ...S.btn('drive'), padding: '7px 12px', fontSize: 10, display: 'flex', alignItems: 'center', gap: 5 }}
+                onClick={() => api.openExternal('https://drive.google.com/drive/folders/11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9')}
+                title="Open Master Bills Vault in Google Drive"
+              >
+                ☁ Open in Drive ↗
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Filters bar */}
       <div style={{ display:'flex', gap:10, marginBottom:20, flexWrap:'wrap', alignItems:'center', justifyContent:'space-between' }}>
@@ -1346,7 +1522,14 @@ function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, compan
                 return (
                   <tr key={b.id} style={{ opacity:fin.computedStatus==='paid'?0.8:1 }}>
                     <td style={{ ...S.td, fontWeight:800, color:C.gold }}>#{b.billNo}</td>
-                    <td style={{ ...S.td, color:C.textMuted, fontSize:12 }}>{b.date}</td>
+                    <td style={{ ...S.td, color:C.textMuted, fontSize:12 }}>
+                      <div>{b.date}</div>
+                      {b.monthFolder && (
+                        <div style={{ fontSize:9, color:'#60a5fa', opacity:0.85, marginTop:2 }}>
+                          📁 {b.monthFolder.split(' ')[0]}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ ...S.td, maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:600 }}>
                       {b.customer}
                     </td>
@@ -1370,8 +1553,10 @@ function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, compan
                     </td>
                     <td style={S.td}>
                       {b.driveUrl ? (
-                        <span onClick={()=>api.openExternal(b.driveUrl)}
-                          style={{ color:C.drive, fontSize:11, cursor:'pointer', textDecoration:'underline', fontWeight:600 }}>☁ PDF Open</span>
+                        <div>
+                          <span onClick={()=>api.openExternal(b.driveUrl)}
+                            style={{ color:C.drive, fontSize:11, cursor:'pointer', textDecoration:'underline', fontWeight:600 }}>☁ PDF Open</span>
+                        </div>
                       ) : syncingId===b.id ? (
                         <span style={{ fontSize:11, color:C.drive }}>⟳ Uploading...</span>
                       ) : (
@@ -1560,6 +1745,342 @@ function AnalyticsPage({ bills, customers }) {
   );
 }
 
+// ── MONTHLY GST TAX FILING RADAR ──────────────────────────────────────────────
+function MonthlyGSTRadar({ bills, company }) {
+  const [copied, setCopied] = useState(false);
+
+  // Determine current and previous month keys (YYYY-MM)
+  const now = new Date();
+  const currentMonthKey = now.toISOString().slice(0, 7);
+  const prevMonthObj = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevMonthKey = prevMonthObj.toISOString().slice(0, 7);
+
+  // Default to previous month if today is <= 20th of the month, else current month
+  const [selectedMonth, setSelectedMonth] = useState(prevMonthKey);
+
+  // Group all available months with GST data
+  const monthData = useMemo(() => {
+    const map = {};
+    bills.forEach(b => {
+      const ym = (b.date || '').slice(0, 7);
+      if (!ym) return;
+      if (!map[ym]) {
+        const [y, m] = ym.split('-');
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const mIdx = parseInt(m, 10) - 1;
+        const label = `${monthNames[mIdx] || m} ${y}`;
+        map[ym] = {
+          key: ym,
+          label,
+          subtotal: 0,
+          cgst: 0,
+          sgst: 0,
+          totalGst: 0,
+          gross: 0,
+          count: 0,
+          billNos: []
+        };
+      }
+      map[ym].subtotal += Number(b.subtotal || 0);
+      map[ym].cgst += Number(b.cgst || 0);
+      map[ym].sgst += Number(b.sgst || 0);
+      map[ym].gross += Number(b.netAmount || 0);
+      map[ym].count += 1;
+      if (b.billNo !== undefined && b.billNo !== null) map[ym].billNos.push(Number(b.billNo));
+    });
+
+    Object.values(map).forEach(m => {
+      m.totalGst = m.cgst + m.sgst;
+    });
+
+    return map;
+  }, [bills]);
+
+  const availableMonths = useMemo(() => {
+    const keys = Object.keys(monthData);
+    if (!keys.includes(prevMonthKey)) keys.push(prevMonthKey);
+    if (!keys.includes(currentMonthKey)) keys.push(currentMonthKey);
+    return keys.sort().reverse();
+  }, [monthData, prevMonthKey, currentMonthKey]);
+
+  // Selected month stats
+  const cur = monthData[selectedMonth] || {
+    key: selectedMonth,
+    label: selectedMonth,
+    subtotal: 0,
+    cgst: 0,
+    sgst: 0,
+    totalGst: 0,
+    gross: 0,
+    count: 0,
+    billNos: []
+  };
+
+  const billRange = cur.billNos.length > 0
+    ? `#${Math.min(...cur.billNos)} - #${Math.max(...cur.billNos)}`
+    : 'None';
+
+  const isPrev = selectedMonth === prevMonthKey;
+
+  // Format message for CA / Auditor
+  const auditorText = `Vanakkam Sir,
+*${company.name}* — GST Tax Summary for GSTR Filing:
+────────────────────────
+📅 Period: ${cur.label} ${isPrev ? '(Previous Month Filing)' : ''}
+🧾 Total Invoices: ${cur.count} Bills (${billRange})
+💵 Taxable Subtotal: ${fmtINR(cur.subtotal)}
+
+🔹 CGST (2.50%): ${fmtINR(cur.cgst)}
+🔹 SGST (2.50%): ${fmtINR(cur.sgst)}
+────────────────────────
+🧾 TOTAL GST PAYABLE (5%): ${fmtINR(cur.totalGst)}
+💰 Total Invoiced (Gross): ${fmtINR(cur.gross)}
+────────────────────────
+GSTIN: ${company.gstin}
+Kindly file GSTR-3B / GSTR-1.`;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(auditorText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 3000);
+  };
+
+  const handleWhatsApp = () => {
+    const url = `https://wa.me/?text=${encodeURIComponent(auditorText)}`;
+    api.openExternal(url);
+  };
+
+  const handleExportMonthCSV = async () => {
+    const monthBills = bills.filter(b => (b.date || '').startsWith(selectedMonth));
+    const csvContent = exportBillsToCSV(monthBills);
+    await api.exportFile({
+      defaultName: `SGC_GST_Report_${selectedMonth}.csv`,
+      content: csvContent,
+      extension: 'csv',
+    });
+  };
+
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, rgba(26,58,107,0.35) 0%, rgba(13,27,62,0.85) 100%)',
+      border: '1.5px solid rgba(59,130,246,0.45)',
+      borderRadius: 16,
+      padding: '20px 24px',
+      marginBottom: 28,
+      boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+      position: 'relative',
+      overflow: 'hidden'
+    }}>
+      {/* Decorative background glow */}
+      <div style={{ position:'absolute', top:-40, right:-40, width:140, height:140, background:'rgba(59,130,246,0.15)', borderRadius:'50%', filter:'blur(40px)', pointerEvents:'none' }} />
+
+      {/* Header with period switcher */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:12, marginBottom:16 }}>
+        <div>
+          <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+            <span style={{ fontSize:18 }}>🏛️</span>
+            <span style={{ fontSize:16, fontWeight:800, color:'#fff', letterSpacing:0.5 }}>
+              Monthly GST Tax Filing Radar
+            </span>
+            {isPrev && (
+              <span style={{ fontSize:10, background:'rgba(255,170,68,0.2)', color:C.orange, border:'1px solid rgba(255,170,68,0.4)', borderRadius:6, padding:'2px 8px', fontWeight:700 }}>
+                ⚡ Previous Month Filing
+              </span>
+            )}
+            {now.getDate() <= 11 && isPrev && (
+              <span style={{ fontSize:10, background:'rgba(239,68,68,0.2)', color:'#f87171', border:'1px solid rgba(239,68,68,0.4)', borderRadius:6, padding:'2px 8px', fontWeight:700 }}>
+                🔔 Due for GSTR-1 & 3B
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize:11.5, color:'#94a3b8', marginTop:3 }}>
+            Auto-calculates CGST, SGST & Total Tax for before month and current month ready for your CA / Auditor.
+          </div>
+        </div>
+
+        {/* Month Dropdown / Selector */}
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <span style={{ fontSize:11, color:C.textMuted }}>Period:</span>
+          <select
+            value={selectedMonth}
+            onChange={e => setSelectedMonth(e.target.value)}
+            style={{
+              background: 'rgba(15,23,42,0.9)',
+              border: '1px solid rgba(59,130,246,0.5)',
+              borderRadius: 8,
+              color: '#fff',
+              padding: '6px 12px',
+              fontSize: 12,
+              fontWeight: 600,
+              outline: 'none',
+              cursor: 'pointer'
+            }}
+          >
+            {availableMonths.map(ym => {
+              const [y, m] = ym.split('-');
+              const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+              const mIdx = parseInt(m, 10) - 1;
+              const lbl = `${monthNames[mIdx] || m} ${y}`;
+              const tag = ym === prevMonthKey ? ' (Previous Month)' : ym === currentMonthKey ? ' (Current Month)' : '';
+              return (
+                <option key={ym} value={ym} style={{ background: '#0f172a', color: '#fff' }}>
+                  {lbl}{tag}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+      </div>
+
+      {/* Tax Metrics Grid */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:12, marginBottom:18 }}>
+        {/* CGST */}
+        <div style={{ background:'rgba(15,23,42,0.6)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:12, padding:'12px 16px' }}>
+          <div style={{ fontSize:10.5, color:'#94a3b8', textTransform:'uppercase', letterSpacing:1 }}>CGST (2.50%)</div>
+          <div style={{ fontSize:20, fontWeight:800, color:'#60a5fa', marginTop:4 }}>{fmtINR(cur.cgst)}</div>
+          <div style={{ fontSize:10, color:C.textMuted, marginTop:2 }}>Central Tax</div>
+        </div>
+
+        {/* SGST */}
+        <div style={{ background:'rgba(15,23,42,0.6)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:12, padding:'12px 16px' }}>
+          <div style={{ fontSize:10.5, color:'#94a3b8', textTransform:'uppercase', letterSpacing:1 }}>SGST (2.50%)</div>
+          <div style={{ fontSize:20, fontWeight:800, color:'#38bdf8', marginTop:4 }}>{fmtINR(cur.sgst)}</div>
+          <div style={{ fontSize:10, color:C.textMuted, marginTop:2 }}>State Tax</div>
+        </div>
+
+        {/* TOTAL GST (HIGHLIGHTED) */}
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(37,99,235,0.25) 0%, rgba(16,185,129,0.2) 100%)',
+          border: '1.5px solid #10b981',
+          borderRadius: 12,
+          padding: '12px 16px',
+          boxShadow: '0 0 20px rgba(16,185,129,0.15)'
+        }}>
+          <div style={{ fontSize:10.5, color:'#6ee7b7', textTransform:'uppercase', letterSpacing:1, fontWeight:700 }}>
+            🧾 TOTAL GST (5.00%)
+          </div>
+          <div style={{ fontSize:22, fontWeight:900, color:'#10b981', marginTop:4 }}>{fmtINR(cur.totalGst)}</div>
+          <div style={{ fontSize:10, color:'#a7f3d0', marginTop:2 }}>Total Tax Payable</div>
+        </div>
+
+        {/* Taxable Subtotal */}
+        <div style={{ background:'rgba(15,23,42,0.6)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:12, padding:'12px 16px' }}>
+          <div style={{ fontSize:10.5, color:'#94a3b8', textTransform:'uppercase', letterSpacing:1 }}>Taxable Subtotal</div>
+          <div style={{ fontSize:20, fontWeight:800, color:C.gold, marginTop:4 }}>{fmtINR(cur.subtotal)}</div>
+          <div style={{ fontSize:10, color:C.textMuted, marginTop:2 }}>Turnover without Tax</div>
+        </div>
+
+        {/* Total Invoiced (Gross) */}
+        <div style={{ background:'rgba(15,23,42,0.6)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:12, padding:'12px 16px' }}>
+          <div style={{ fontSize:10.5, color:'#94a3b8', textTransform:'uppercase', letterSpacing:1 }}>Total Invoiced (Gross)</div>
+          <div style={{ fontSize:20, fontWeight:800, color:'#f1f5f9', marginTop:4 }}>{fmtINR(cur.gross)}</div>
+          <div style={{ fontSize:10, color:C.textMuted, marginTop:2 }}>{cur.count} Invoices ({billRange})</div>
+        </div>
+      {/* Bill-by-Bill GST List for Selected Month */}
+      <div style={{ marginTop: 18, marginBottom: 18, background: 'rgba(15,23,42,0.75)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+        <div style={{ padding: '12px 16px', background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#93c5fd', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>🧾 Month-oda All Bills GST Breakdown</span> — <span style={{ color: '#fff' }}>{cur.label}</span>
+          </div>
+          <div style={{ fontSize: 11, color: C.textMuted }}>
+            {cur.count} Bills in this Month
+          </div>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: 'rgba(10,10,20,0.5)', color: C.textMuted }}>
+                <th style={{ ...S.th, padding: '9px 14px' }}>Bill No</th>
+                <th style={{ ...S.th, padding: '9px 14px' }}>Date</th>
+                <th style={{ ...S.th, padding: '9px 14px' }}>Customer Name</th>
+                <th style={{ ...S.th, padding: '9px 14px', textAlign: 'right', color: '#60a5fa' }}>CGST (2.5%)</th>
+                <th style={{ ...S.th, padding: '9px 14px', textAlign: 'right', color: '#38bdf8' }}>SGST (2.5%)</th>
+                <th style={{ ...S.th, padding: '9px 14px', textAlign: 'right', color: '#10b981', fontWeight: 800 }}>Total GST (5%)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bills.filter(b => (b.date || '').startsWith(selectedMonth)).map(b => {
+                const cgst = Number(b.cgst || 0);
+                const sgst = Number(b.sgst || 0);
+                const totalGst = cgst + sgst;
+                return (
+                  <tr key={b.id || b.billNo} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                    <td style={{ ...S.td, padding: '9px 14px', fontWeight: 800, color: C.gold }}>#{b.billNo}</td>
+                    <td style={{ ...S.td, padding: '9px 14px', color: C.textMuted }}>{b.date}</td>
+                    <td style={{ ...S.td, padding: '9px 14px', fontWeight: 600, color: '#fff' }}>{b.customer}</td>
+                    <td style={{ ...S.td, padding: '9px 14px', textAlign: 'right', color: '#60a5fa' }}>{fmtINR(cgst)}</td>
+                    <td style={{ ...S.td, padding: '9px 14px', textAlign: 'right', color: '#38bdf8' }}>{fmtINR(sgst)}</td>
+                    <td style={{ ...S.td, padding: '9px 14px', textAlign: 'right', fontWeight: 800, color: '#10b981' }}>{fmtINR(totalGst)}</td>
+                  </tr>
+                );
+              })}
+              {cur.count === 0 && (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: 24, color: C.textMuted }}>
+                    No bills found for {cur.label}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            {cur.count > 0 && (
+              <tfoot>
+                <tr style={{ background: 'linear-gradient(135deg, rgba(37,99,235,0.2) 0%, rgba(16,185,129,0.2) 100%)', borderTop: '2px solid rgba(59,130,246,0.3)', fontWeight: 800 }}>
+                  <td colSpan={3} style={{ ...S.td, padding: '12px 14px', color: '#fff', fontSize: 12 }}>
+                    TOTAL GST AMOUNT FOR {cur.label.toUpperCase()}:
+                  </td>
+                  <td style={{ ...S.td, padding: '12px 14px', textAlign: 'right', color: '#60a5fa', fontSize: 13 }}>
+                    {fmtINR(cur.cgst)}
+                  </td>
+                  <td style={{ ...S.td, padding: '12px 14px', textAlign: 'right', color: '#38bdf8', fontSize: 13 }}>
+                    {fmtINR(cur.sgst)}
+                  </td>
+                  <td style={{ ...S.td, padding: '12px 14px', textAlign: 'right', color: '#10b981', fontSize: 15, fontWeight: 900 }}>
+                    {fmtINR(cur.totalGst)}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+
+      {/* Action Buttons: WhatsApp to CA, Copy, CSV */}
+      <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'center', justifyContent:'space-between', borderTop:'1px solid rgba(255,255,255,0.08)', paddingTop:14 }}>
+        <div style={{ fontSize:11, color:'#94a3b8', display:'flex', alignItems:'center', gap:6 }}>
+          <span>📌 GSTIN: <strong style={{ color:'#fff' }}>{company.gstin}</strong></span>
+          <span>•</span>
+          <span>HSN: <strong style={{ color:'#fff' }}>{company.hsn}</strong></span>
+        </div>
+
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <button
+            style={{ ...S.btn('whatsapp'), padding:'7px 14px', fontSize:11, display:'flex', alignItems:'center', gap:6 }}
+            onClick={handleWhatsApp}
+            title="Send formatted GST summary to CA / Auditor via WhatsApp"
+          >
+            <span>💬 Send to Auditor (WhatsApp)</span>
+          </button>
+          <button
+            style={{ ...S.btn(), padding:'7px 14px', fontSize:11, display:'flex', alignItems:'center', gap:6 }}
+            onClick={handleCopy}
+            title="Copy formatted text to clipboard"
+          >
+            <span>{copied ? '✅ Copied!' : '📋 Copy Summary'}</span>
+          </button>
+          <button
+            style={{ ...S.btn('success'), padding:'7px 14px', fontSize:11, display:'flex', alignItems:'center', gap:6 }}
+            onClick={handleExportMonthCSV}
+            title="Download GSTR-1 Excel / CSV format for this month"
+          >
+            <span>📊 Export GSTR-1 CSV</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
 function Dashboard({ bills, onNewBill, onShowLedger, customers, company }) {
   const totalAmt   = bills.reduce((s,b)=>s+Number(b.netAmount||0),0);
@@ -1594,6 +2115,9 @@ function Dashboard({ bills, onNewBill, onShowLedger, customers, company }) {
           </div>
         ))}
       </div>
+
+      {/* Monthly GST Tax Filing Radar */}
+      <MonthlyGSTRadar bills={bills} company={company} />
 
       <div style={S.section}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
@@ -1727,7 +2251,7 @@ function CustomersPage({ customers, bills, setCustomers, onShowLedger }) {
 }
 
 // ── SETTINGS PAGE ─────────────────────────────────────────────────────────────
-function SettingsPage({ countMap, setCountMap, driveConnected, onDriveConnect, onDriveDisconnect, folderId, setFolderId, company, setCompany, bills, setBills, customers, setCustomers }) {
+function SettingsPage({ countMap, setCountMap, driveConnected, onDriveConnect, onDriveDisconnect, folderId, setFolderId, company, setCompany, bills, setBills, customers, setCustomers, syncingAll, syncAllBills }) {
   const [newCount, setNewCount]     = useState('');
   const [newKazhi, setNewKazhi]     = useState('');
   const [cmMsg, setCmMsg]           = useState('');
@@ -1827,10 +2351,23 @@ function SettingsPage({ countMap, setCountMap, driveConnected, onDriveConnect, o
         {driveConnected && (
           <div style={{ marginTop:16, display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap' }}>
             <div style={{ flex:1, minWidth:240 }}>
-              <label style={S.label}>Google Drive Folder ID</label>
+              <label style={S.label}>Master Main Bills Google Drive Folder ID (Locked)</label>
               <input style={S.input} value={folderEdit} onChange={e=>setFolderEdit(e.target.value)} />
             </div>
             <button style={S.btn('success')} onClick={saveFolderId}>Save Folder ID</button>
+            <button
+              style={{ ...S.btn('drive'), padding:'8px 14px' }}
+              onClick={()=>api.openExternal('https://drive.google.com/drive/folders/11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9?usp=drive_link')}>
+              📂 Open Main Drive Folder ↗
+            </button>
+            <button style={{ ...S.btn('primary'), padding:'8px 14px' }} onClick={syncAllBills} disabled={syncingAll}>
+              {syncingAll ? '⟳ Syncing...' : '☁ Sync All Bills'}
+            </button>
+          </div>
+        )}
+        {driveConnected && (
+          <div style={{ marginTop:12, fontSize:11, color:C.textMuted }}>
+            Mukil's Master Main Bills Drive Vault: <b>11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9</b>. Every bill PDF is automatically uploaded directly to this folder.
           </div>
         )}
       </div>
@@ -1885,6 +2422,136 @@ function SettingsPage({ countMap, setCountMap, driveConnected, onDriveConnect, o
           <div><label style={S.label}>Jurisdiction City</label><input style={S.input} value={compEdit.jurisdiction} onChange={e=>setCompEdit({...compEdit, jurisdiction:e.target.value})} /></div>
         </div>
         <button style={S.btn('primary')} onClick={saveCompanyProfile}>💾 Save Company Profile</button>
+      </div>
+    </div>
+  );
+}
+
+// ── GMAIL SYNC PAGE ──────────────────────────────────────────────────────────────
+function GmailSyncPage({ company }) {
+  const [status, setStatus] = useState('idle');
+  const [message, setMessage] = useState('');
+  const [foundCount, setFoundCount] = useState(0);
+  const [authStep, setAuthStep] = useState(1);
+  const [authCode, setAuthCode] = useState('');
+  const [gmailConnected, setGmailConnected] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const res = await api.gmailAuthStatus();
+      setGmailConnected(res.connected);
+    })();
+  }, []);
+
+  const handleGmailAuthStart = async () => {
+    const res = await api.gmailAuthStart();
+    if (res.success) {
+      setMessage('✅ Browser opened. Login and paste the auth code below.');
+      setAuthStep(2);
+    } else {
+      setMessage(`❌ ${res.error}`);
+    }
+  };
+
+  const handleGmailAuthExchange = async () => {
+    if (!authCode.trim()) { setMessage('❌ Enter auth code'); return; }
+    const res = await api.gmailAuthExchange(authCode);
+    if (res.success) {
+      setGmailConnected(true);
+      setMessage('✅ Gmail connected!');
+    } else {
+      setMessage(`❌ ${res.error}`);
+    }
+  };
+
+  const handleGmailDisconnect = async () => {
+    await api.gmailAuthDisconnect();
+    setGmailConnected(false);
+    setAuthStep(1);
+    setMessage('');
+  };
+
+  const handleScanEmails = async () => {
+    setStatus('scanning');
+    setMessage('');
+    try {
+      const res = await api.gmailScan({ label: 'SGC-Billing', maxResults: 50 });
+      if (res.success) {
+        setFoundCount(res.count || 0);
+        setStatus('connected');
+        setMessage(res.message || `✅ Scanned ${res.count || 0} bills.`);
+      } else {
+        setStatus('error');
+        setMessage(`❌ ${res.error || 'Scan failed'}`);
+      }
+    } catch (err) {
+      setStatus('error');
+      setMessage(`❌ ${err.message}`);
+    }
+  };
+
+  return (
+    <div className="fade-in" style={{ maxWidth: 680, margin: '40px auto' }}>
+      <div style={S.section}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <span style={{ fontSize: 24 }}>📥</span>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>Gmail Bill Scanner</div>
+            <div style={{ fontSize: 11, color: C.textMuted, letterSpacing: 1 }}>
+              Auto-scan Gmail for bills labeled "SGC-Billing" and extract bill data
+            </div>
+          </div>
+        </div>
+
+        {/* Gmail Auth Status */}
+        <div style={{ marginBottom: 16 }}>
+          {gmailConnected ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ color: C.green, fontWeight: 700 }}>✅ Gmail Connected</span>
+              <button style={{ ...S.btn('danger'), padding: '4px 10px', fontSize: 10 }} onClick={handleGmailDisconnect}>Disconnect</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ color: C.red, fontWeight: 700 }}>⚠ Gmail not connected</span>
+              <button style={S.btn('drive')} onClick={handleGmailAuthStart}>Connect Gmail →</button>
+            </div>
+          )}
+        </div>
+
+        {/* Auth Code Input (Step 2) */}
+        {authStep === 2 && !gmailConnected && (
+          <div style={{ background: 'rgba(255,200,74,0.06)', border: `1px solid ${C.gold}33`, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: C.gold, fontWeight: 700, letterSpacing: 1.5, marginBottom: 8 }}>STEP 2 — Paste Auth Code</div>
+            <input style={S.input} value={authCode} onChange={(e) => setAuthCode(e.target.value)} placeholder="Paste Google auth code here..." />
+            <button style={{ ...S.btn('success'), marginTop: 10, padding: '8px 16px' }} onClick={handleGmailAuthExchange}>✓ Complete Connection</button>
+          </div>
+        )}
+
+        {message && (
+          <div style={{ padding: 12, background: message.startsWith('✅') ? 'rgba(78,217,122,0.08)' : 'rgba(255,107,107,0.08)', borderRadius: 10, marginBottom: 14, fontSize: 12, color: message.startsWith('✅') ? C.green : C.red }}>
+            {message}
+          </div>
+        )}
+
+        {/* Scan Button */}
+        {gmailConnected && (
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <button style={{ ...S.btn('primary'), padding: '10px 20px' }} onClick={handleScanEmails} disabled={status === 'scanning'}>
+              {status === 'scanning' ? '⟳ Scanning...' : '🚀 Scan Gmail for Bills'}
+            </button>
+            {foundCount > 0 && (
+              <span style={{ fontSize: 11, color: C.textMuted }}>
+                {foundCount} bill(s) found with "SGC-Billing" label
+              </span>
+            )}
+          </div>
+        )}
+
+        {!gmailConnected && (
+          <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.6, marginTop: 12 }}>
+            Connect your Gmail to auto-scan emails labeled <b>"SGC-Billing"</b> and extract bill details directly into your billing system.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1996,10 +2663,11 @@ function App() {
   const [countMap, setCountMap]     = useState(DEFAULT_COUNT_MAP);
   const [company, setCompany]       = useState(DEFAULT_COMPANY);
   const [driveConnected, setDrive]  = useState(false);
-  const [folderId, setFolderId]     = useState('155EqYOwPJ2Fc9QfqVSrZu5VnYzZgRcyZ');
+  const [folderId, setFolderId]     = useState('11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9');
   const [editBill, setEditBill]     = useState(null);
   const [ledgerCustomer, setLedger] = useState(null);
   const [loaded, setLoaded]         = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -2060,6 +2728,27 @@ function App() {
     setTab('dashboard');
   };
 
+  const syncAllBills = async () => {
+    if (!driveConnected) return;
+    setSyncingAll(true);
+    const payload = bills.map(b => ({ billData: b, htmlContent: generateBillHTML(b, company) }));
+    const res = await api.syncAllBills({ billPayloads: payload });
+    setSyncingAll(false);
+    if (res.success) {
+      const s = res.summary;
+      const updated = bills.map(b => {
+        const r = s.results.find(x => Number(x.billNo) === Number(b.billNo));
+        if (r && r.success) return { ...b, driveUrl: r.driveUrl, driveFileId: r.fileId, vaultFiles: r.vaultFiles };
+        return b;
+      });
+      setBills(updated);
+      await api.storeSet('sgc-bills', updated);
+      alert(`✅ Drive sync complete!\n${s.synced}/${s.total} bills uploaded (${s.updated} updated in place, ${s.failed} failed).`);
+    } else {
+      alert(`❌ Sync failed: ${res.error}`);
+    }
+  };
+
   if (!loaded) {
     return (
       <div style={{ ...S.app, display:'flex', alignItems:'center', justifyContent:'center', minHeight:'100vh' }}>
@@ -2075,6 +2764,7 @@ function App() {
     ['dashboard', 'Dashboard'],
     ['new',       editBill ? 'Edit Bill ✎' : 'New Bill +'],
     ['bills',     'All Bills'],
+    ['gmail-sync', '📥 GMAIL SYNC'],
     ['customers', 'Customers'],
     ['analytics', 'Analytics & Reports'],
     ['settings',  'Settings'],
@@ -2093,6 +2783,12 @@ function App() {
           }}>{l}</button>
         ))}
         <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:10, padding:'10px 0' }}>
+          <button
+            style={{ ...S.btn('drive'), padding:'5px 12px', fontSize:11, display:'flex', alignItems:'center', gap:5, cursor:'pointer' }}
+            onClick={()=>api.openExternal('https://drive.google.com/drive/folders/11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9?usp=drive_link')}
+            title="Open Mukil's Master Main Bills Drive Vault">
+            📁 Main Drive Bills ↗
+          </button>
           <span style={S.badge(driveConnected?'drive':'orange')}>
             {driveConnected ? '☁ Drive Connected' : '⚠ Drive Offline'}
           </span>
@@ -2105,7 +2801,8 @@ function App() {
         {tab==='bills'      && <BillsList bills={bills} setBills={setBills} onEditBill={handleEditBill} onCloneBill={handleCloneBill} customers={customers} company={company} />}
         {tab==='customers'  && <CustomersPage customers={customers} bills={bills} setCustomers={setCustomers} onShowLedger={c=>setLedger(c)} />}
         {tab==='analytics'  && <AnalyticsPage bills={bills} customers={customers} />}
-        {tab==='settings'   && <SettingsPage countMap={countMap} setCountMap={setCountMap} driveConnected={driveConnected} onDriveConnect={handleDriveConnect} onDriveDisconnect={handleDriveDisconnect} folderId={folderId} setFolderId={setFolderId} company={company} setCompany={setCompany} bills={bills} setBills={setBills} customers={customers} setCustomers={setCustomers} />}
+        {tab==='settings'   && <SettingsPage countMap={countMap} setCountMap={setCountMap} driveConnected={driveConnected} onDriveConnect={handleDriveConnect} onDriveDisconnect={handleDriveDisconnect} folderId={folderId} setFolderId={setFolderId} company={company} setCompany={setCompany} bills={bills} setBills={setBills} customers={customers} setCustomers={setCustomers} syncingAll={syncingAll} syncAllBills={syncAllBills} />}
+        {tab==='gmail-sync' && <GmailSyncPage company={company} />}
         {tab==='drive-auth' && <DriveAuthPage onConnected={handleConnected} />}
       </main>
 
