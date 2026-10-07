@@ -1,3 +1,14 @@
-﻿node_modules/
+node_modules/
 dist/
 *.log
+*.py
+test_*
+check_*
+print_*
+sync_*
+generate_*
+re_*
+render_*
+fast_auth.js
+find_unclosed_tags.py
+bill_html.js

@@ -3,6 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
 
+// Prevent GPU crash on Windows
+app.disableHardwareAcceleration();
+
 const store = new Store({ name: 'sgc-billing-data' });
 
 let mainWindow;
@@ -22,7 +25,7 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
-    backgroundColor: '#0c0c14',
+    backgroundColor: '#0b0f19',
     show: false,
   });
 
@@ -32,6 +35,14 @@ function createWindow() {
     mainWindow.show();
     mainWindow.maximize();
   });
+
+  // Fallback if ready-to-show is delayed
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show();
+      mainWindow.maximize();
+    }
+  }, 1500);
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
@@ -105,29 +116,59 @@ function getDriveClient() {
   const oAuth2Client = new google.auth.OAuth2(
     installed.client_id,
     installed.client_secret,
-    installed.redirect_uris ? installed.redirect_uris[0] : 'urn:ietf:wg:oauth:2.0:oob'
+    installed.redirect_uris ? installed.redirect_uris[0] : 'http://localhost'
   );
   oAuth2Client.setCredentials(tokens);
   oAuth2Client.on('tokens', (newTokens) => {
-    store.set('google-tokens', { ...store.get('google-tokens', {}), ...newTokens });
+    const updated = { ...store.get('google-tokens', {}), ...newTokens };
+    store.set('google-tokens', updated);
+    try {
+      if (fs.existsSync(vaultTokenPath)) {
+        const v = JSON.parse(fs.readFileSync(vaultTokenPath, 'utf8'));
+        if (updated.access_token) v.token = updated.access_token;
+        if (updated.refresh_token) v.refresh_token = updated.refresh_token;
+        if (updated.expiry_date) v.expiry = new Date(updated.expiry_date).toISOString();
+        fs.writeFileSync(vaultTokenPath, JSON.stringify(v, null, 2), 'utf8');
+      }
+    } catch (_) {}
   });
-  return { google, drive: google.drive({ version: 'v3', auth: oAuth2Client }) };
+  return { google, drive: google.drive({ version: 'v3', auth: oAuth2Client }), oAuth2Client };
 }
 
 function getMonthFolderName(dateString) {
-  let d = new Date();
+  let year, monthNum;
   if (dateString) {
-    const parsed = new Date(dateString);
-    if (!isNaN(parsed.getTime())) d = parsed;
+    const s = String(dateString).trim();
+    const isoMatch = s.match(/^(\d{4})[-/.](\d{1,2})/);
+    if (isoMatch) {
+      year = parseInt(isoMatch[1], 10);
+      monthNum = parseInt(isoMatch[2], 10);
+    } else {
+      const ddmmyyyyMatch = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+      if (ddmmyyyyMatch) {
+        year = parseInt(ddmmyyyyMatch[3], 10);
+        monthNum = parseInt(ddmmyyyyMatch[2], 10);
+      } else {
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) {
+          year = d.getFullYear();
+          monthNum = d.getMonth() + 1;
+        }
+      }
+    }
   }
-  const year = d.getFullYear();
+  if (!year || !monthNum || isNaN(year) || isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+    const now = new Date();
+    year = now.getFullYear();
+    monthNum = now.getMonth() + 1;
+  }
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
-  const monthNum = String(d.getMonth() + 1).padStart(2, '0');
-  const monthName = monthNames[d.getMonth()];
-  return `${year}-${monthNum} (${monthName} ${year})`; // e.g. "2026-09 (September 2026)"
+  const paddedMonth = String(monthNum).padStart(2, '0');
+  const monthName = monthNames[monthNum - 1];
+  return `${year}-${paddedMonth} (${monthName} ${year})`; // e.g. "2026-10 (October 2026)"
 }
 
 const monthFolderCache = {};
@@ -166,6 +207,33 @@ async function getOrCreateMonthFolder(drive, parentFolderId, monthFolderName) {
   }
 }
 
+// Generate safe sanitized file name for a bill
+function billFileName(billData) {
+  const safeName = (billData.customer || 'Customer')
+    .replace(/[^a-zA-Z0-9 ]/g, '_')
+    .slice(0, 40)
+    .trim();
+  return `Bill_${String(billData.billNo || '').padStart(4, '0')}_${safeName}.pdf`;
+}
+
+// Find existing bill files on Drive for update-in-place
+async function findExistingFiles(drive, folderId, billNo) {
+  try {
+    const padded = String(billNo).padStart(4, '0');
+    // Crucial: Only search for PDF files and never match folder names (e.g., month folders)
+    const q = `'${folderId}' in parents and trashed=false and mimeType='application/pdf' and (name contains 'Bill_${padded}' or name contains 'Bill_${billNo}_')`;
+    const res = await drive.files.list({
+      q,
+      fields: 'files(id, name, mimeType, webViewLink, parents)',
+      pageSize: 10,
+    });
+    return (res.data.files || []).filter(f => f.mimeType === 'application/pdf');
+  } catch (err) {
+    console.warn(`findExistingFiles error in folder ${folderId}:`, err.message);
+    return [];
+  }
+}
+
 // Upload (or update-in-place) a bill PDF across every vault folder, organized into month subfolders.
 async function uploadBillToVaults(drive, billData, pdfBuffer) {
   const { Readable } = require('stream');
@@ -181,7 +249,7 @@ async function uploadBillToVaults(drive, billData, pdfBuffer) {
 
       let target = null;
       const recorded = billData && billData.vaultFiles && billData.vaultFiles[parentFolderId];
-      if (recorded) {
+      if (recorded && recorded.fileId && recorded.fileId !== targetFolderId && recorded.fileId !== parentFolderId && (!recorded.webViewLink || !recorded.webViewLink.includes('/drive/folders/'))) {
         target = { id: recorded.fileId, webViewLink: recorded.webViewLink };
       } else {
         try {
@@ -197,6 +265,11 @@ async function uploadBillToVaults(drive, billData, pdfBuffer) {
         } catch (searchErr) {
           console.warn(`Drive list failed for folder ${targetFolderId}, will create:`, searchErr.message);
         }
+      }
+
+      // Extra safeguard: Never treat a folder as the target bill file
+      if (target && (target.id === targetFolderId || target.id === parentFolderId)) {
+        target = null;
       }
 
       const media = { mimeType: 'application/pdf', body: Readable.from(pdfBuffer) };
@@ -407,6 +480,234 @@ ipcMain.handle('organize-drive-bills', async () => {
     }
     return { success: true, report };
   } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ── ENSURE CURRENT MONTH FOLDER ON DRIVE ──────────────────────────────────────
+ipcMain.handle('ensure-month-folder', async () => {
+  try {
+    const client = getDriveClient();
+    if (!client) return { success: false, error: 'Google Drive not authenticated' };
+    const now = new Date();
+    const localDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-15`;
+    const monthFolderName = getMonthFolderName(localDateStr);
+    const folderIds = {};
+    for (const parentId of VAULT_FOLDERS) {
+      const folderId = await getOrCreateMonthFolder(client.drive, parentId, monthFolderName);
+      folderIds[parentId] = folderId;
+    }
+    return { success: true, monthFolderName, folderIds };
+  } catch (err) {
+    console.error('ensure-month-folder error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// ── GENERATE MONTH-END FINANCIAL AUDIT REPORT ─────────────────────────────────
+ipcMain.handle('generate-month-end-report', async (_, monthKey) => {
+  try {
+    const now = new Date();
+    const targetMonth = monthKey || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const bills = store.get('sgc-bills', []);
+    const company = store.get('sgc-company-profile', {}) || {};
+    const monthBills = bills.filter(b => b.date && b.date.startsWith(targetMonth));
+
+    let totalSub = 0;
+    let totalCgst = 0;
+    let totalSgst = 0;
+    let totalNet = 0;
+    let totalPaid = 0;
+    let totalPending = 0;
+
+    const customerMap = {};
+    const countMap = {};
+
+    monthBills.forEach(b => {
+      const net = Number(b.netAmount || 0);
+      const sub = Number(b.subtotal || (net / 1.05));
+      const cgst = Number(b.cgst || (sub * 0.025));
+      const sgst = Number(b.sgst || (sub * 0.025));
+
+      totalSub += sub;
+      totalCgst += cgst;
+      totalSgst += sgst;
+      totalNet += net;
+
+      let p = 0;
+      if (b.payments && Array.isArray(b.payments) && b.payments.length > 0) {
+        p = b.payments.reduce((s, it) => s + Number(it.amount || 0), 0);
+      } else if (b.status === 'paid') {
+        p = net;
+      }
+      const bal = Math.max(0, net - p);
+      totalPaid += p;
+      totalPending += bal;
+
+      const c = b.customer || 'Unknown';
+      if (!customerMap[c]) customerMap[c] = { name: c, count: 0, totalNet: 0, totalPaid: 0, totalPending: 0, bills: [] };
+      customerMap[c].count++;
+      customerMap[c].totalNet += net;
+      customerMap[c].totalPaid += p;
+      customerMap[c].totalPending += bal;
+      customerMap[c].bills.push({ billNo: b.billNo, date: b.date, net, status: b.status, driveUrl: b.driveUrl });
+
+      (b.items || []).forEach(it => {
+        const cnt = (it.count || 'Unknown').trim();
+        if (!countMap[cnt]) countMap[cnt] = { count: cnt, kattu: 0, kazhi: 0, amount: 0 };
+        countMap[cnt].kattu += Number(it.kattu || 0);
+        countMap[cnt].kazhi += Number(it.kazhi || 0);
+        countMap[cnt].amount += Number(it.amount || 0);
+      });
+    });
+
+    const summary = {
+      monthKey: targetMonth,
+      monthName: getMonthFolderName(targetMonth + '-01'),
+      totalBills: monthBills.length,
+      grossSubtotal: totalSub,
+      totalCgst,
+      totalSgst,
+      totalGst: totalCgst + totalSgst,
+      netTotal: totalNet,
+      totalPaid,
+      totalPending,
+      customers: Object.values(customerMap),
+      counts: Object.values(countMap),
+      bills: monthBills,
+      syncedCount: monthBills.filter(b => b.driveUrl).length
+    };
+
+    return { success: true, summary };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ── AUTONOMOUS BACKGROUND SYNC DAEMON ──────────────────────────────────────────
+async function runAutonomousBackgroundSync() {
+  try {
+    const client = getDriveClient();
+    if (!client || !client.oAuth2Client) return;
+
+    try {
+      const at = await client.oAuth2Client.getAccessToken();
+      if (!at || !at.token) return;
+    } catch (_) {
+      return;
+    }
+
+    // 1. Ensure current month folder exists in all vaults
+    const currentMonthFolder = getMonthFolderName(new Date().toISOString());
+    for (const parentId of VAULT_FOLDERS) {
+      await getOrCreateMonthFolder(client.drive, parentId, currentMonthFolder);
+    }
+
+    // 2. Scan and auto-sync any unsynced bills
+    const bills = store.get('sgc-bills', []);
+    const unsynced = bills.filter(b => !b.driveUrl);
+    if (unsynced.length === 0) return;
+
+    console.log(`[Auto-Daemon] Found ${unsynced.length} unsynced bill(s). Syncing to Drive in background...`);
+    const { generateBillHTML } = require('./bill_html.js');
+    const comp = store.get('sgc-company-profile', null);
+    let anySynced = false;
+
+    for (let i = 0; i < bills.length; i++) {
+      const b = bills[i];
+      if (b.driveUrl) continue;
+
+      try {
+        const html = generateBillHTML(b, comp);
+        const pdfBuffer = await generatePdfBuffer(html);
+        const { results } = await uploadBillToVaults(client.drive, b, pdfBuffer);
+        const primary = results.find(r => r.folderId === VAULT_FOLDERS[0]) || results[0];
+        if (primary && primary.webViewLink) {
+          bills[i].driveUrl = primary.webViewLink;
+          bills[i].driveFileId = primary.fileId;
+          const vaultFiles = {};
+          results.forEach(r => { vaultFiles[r.folderId] = { fileId: r.fileId, webViewLink: r.webViewLink }; });
+          bills[i].vaultFiles = vaultFiles;
+          bills[i].monthFolder = primary.monthFolderName;
+          bills[i].monthFolderId = primary.targetFolderId;
+          anySynced = true;
+          console.log(`[Auto-Daemon] Bill #${b.billNo} successfully auto-synced! Link: ${primary.webViewLink}`);
+        }
+      } catch (uploadErr) {
+        console.warn(`[Auto-Daemon] Upload failed for bill #${b.billNo}:`, uploadErr.message);
+      }
+    }
+
+    if (anySynced) {
+      store.set('sgc-bills', bills);
+      const memPath = path.join('C:', 'Users', 'mukil', 'jarvis-core', 'storage', 'memory', 'sgc-billing-data.json');
+      try {
+        if (fs.existsSync(memPath)) {
+          const mdata = JSON.parse(fs.readFileSync(memPath, 'utf8'));
+          mdata['sgc-bills'] = bills;
+          fs.writeFileSync(memPath, JSON.stringify(mdata, null, 2), 'utf8');
+        }
+      } catch (_) {}
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('bills-updated', bills);
+      }
+    }
+  } catch (daemonErr) {
+    console.warn('[Auto-Daemon] Cycle error:', daemonErr.message);
+  }
+}
+
+// Start autonomous daemon 10s after startup, then every 3 minutes
+setTimeout(runAutonomousBackgroundSync, 10000);
+setInterval(runAutonomousBackgroundSync, 180000);
+
+// ── DELETE BILL FROM DRIVE VAULTS ─────────────────────────────────────────────
+ipcMain.handle('delete-bill-from-drive', async (_, { billData }) => {
+  try {
+    const client = getDriveClient();
+    if (!client) return { success: false, error: 'Google Drive not authenticated' };
+    const { drive } = client;
+    const fileIdsToDelete = new Set();
+
+    if (billData.driveFileId) fileIdsToDelete.add(billData.driveFileId);
+    if (billData.vaultFiles) {
+      Object.values(billData.vaultFiles).forEach(v => {
+        if (v && v.fileId) fileIdsToDelete.add(v.fileId);
+      });
+    }
+
+    // Also search Drive by padded billNo in month folders across all vaults
+    for (const parentFolderId of VAULT_FOLDERS) {
+      try {
+        const monthFolderName = getMonthFolderName(billData.date);
+        const targetFolderId = await getOrCreateMonthFolder(drive, parentFolderId, monthFolderName);
+        const existing = await findExistingFiles(drive, targetFolderId, billData.billNo);
+        existing.forEach(f => fileIdsToDelete.add(f.id));
+      } catch (searchErr) {
+        console.warn('Drive search during delete failed:', searchErr.message);
+      }
+    }
+
+    const deleted = [];
+    const errors = [];
+    for (const fileId of fileIdsToDelete) {
+      try {
+        const fileMeta = await drive.files.get({ fileId, fields: 'id, mimeType, name' });
+        // Safeguard: NEVER delete a folder!
+        if (fileMeta.data.mimeType === 'application/vnd.google-apps.folder') {
+          console.warn(`Skipping deletion of folder ${fileId} (${fileMeta.data.name})`);
+          continue;
+        }
+        await drive.files.delete({ fileId });
+        deleted.push(fileId);
+      } catch (delErr) {
+        errors.push(`File ${fileId}: ${delErr.message}`);
+      }
+    }
+    return { success: true, deleted, errors };
+  } catch (err) {
+    console.error('delete-bill-from-drive error:', err);
     return { success: false, error: err.message };
   }
 });
@@ -639,34 +940,137 @@ ipcMain.handle('gmail-scan', async (_, { label = 'SGC-Billing', maxResults = 50 
   }
 });
 
-// ── SAVE LOCAL PDF ────────────────────────────────────────────────────────────
+// ── GOOGLE DRIVE OAUTH (Modern Loopback Flow) ──────────────────────────────────
+let authHttpServer = null;
+
 ipcMain.handle('google-auth-start', async (_, clientSecretData) => {
-  try {
-    const { google } = require('googleapis');
-    const { installed } = clientSecretData;
+  return new Promise((resolve) => {
+    try {
+      const http = require('http');
+      const { google } = require('googleapis');
 
-    const oAuth2Client = new google.auth.OAuth2(
-      installed.client_id,
-      installed.client_secret,
-      'urn:ietf:wg:oauth:2.0:oob' // Desktop app flow
-    );
+      if (!clientSecretData || !clientSecretData.installed) {
+        clientSecretData = store.get('google-client-secret', null);
+      }
+      if (!clientSecretData || !clientSecretData.installed) {
+        const dlPath = path.join('C:', 'Users', 'mukil', 'Downloads', 'client_secret_501766030810-m0bn27lv0ksg4mhgn15lapajebrdr9ic.apps.googleusercontent.com.json');
+        if (fs.existsSync(dlPath)) {
+          try { clientSecretData = JSON.parse(fs.readFileSync(dlPath, 'utf8')); } catch (_) {}
+        }
+      }
 
-    const authUrl = oAuth2Client.generateAuthUrl({
-      access_type: 'offline',
-      scope: ['https://www.googleapis.com/auth/drive.file'],
-      prompt: 'consent',
-    });
+      if (!clientSecretData || !clientSecretData.installed) {
+        return resolve({ success: false, error: 'client_secret.json not found! Please provide client secret.' });
+      }
 
-    // Store client secret for later use
-    store.set('google-client-secret', clientSecretData);
+      const { installed } = clientSecretData;
+      store.set('google-client-secret', clientSecretData);
 
-    // Open auth URL in browser
-    shell.openExternal(authUrl);
+      if (authHttpServer) {
+        try { authHttpServer.close(); } catch (_) {}
+        authHttpServer = null;
+      }
 
-    return { success: true, authUrl };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
+      let port = 0;
+      authHttpServer = http.createServer(async (req, res) => {
+        try {
+          const reqUrl = new URL(req.url, 'http://localhost');
+          const code = reqUrl.searchParams.get('code');
+          const error = reqUrl.searchParams.get('error');
+
+          if (code) {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(`
+              <!DOCTYPE html>
+              <html>
+              <head><meta charset="utf-8"><title>SGC Billing — Drive Connected</title></head>
+              <body style="background:#0b0f19;color:#e2e8f0;font-family:Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                <div style="background:#151c2e;border:1px solid #34a853;padding:40px;border-radius:12px;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,0.5);max-width:480px;">
+                  <div style="font-size:48px;margin-bottom:12px;">✅</div>
+                  <h2 style="color:#34a853;margin-top:0;">Google Drive Connected!</h2>
+                  <p style="font-size:14px;color:#94a3b8;line-height:1.5;">Mukil's SGC Billing is now securely connected to Google Drive.<br/>Bills will automatically upload to your Master Vault (<code>11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9</code>).</p>
+                  <p style="font-size:12px;color:#64748b;margin-top:20px;">You can safely close this browser window and return to SGC Billing.</p>
+                </div>
+              </body>
+              </html>
+            `);
+
+            try { authHttpServer.close(); } catch (_) {}
+            authHttpServer = null;
+
+            const redirectUri = `http://localhost:${port}`;
+            const oAuth2Client = new google.auth.OAuth2(
+              installed.client_id,
+              installed.client_secret,
+              redirectUri
+            );
+
+            const { tokens } = await oAuth2Client.getToken(code);
+            store.set('google-tokens', tokens);
+
+            const vaultTokenPath = path.join('C:', 'Users', 'mukil', 'jarvis-core', 'storage', 'vault', 'google_drive_token.json');
+            try {
+              fs.writeFileSync(vaultTokenPath, JSON.stringify({
+                token: tokens.access_token,
+                refresh_token: tokens.refresh_token,
+                token_uri: "https://oauth2.googleapis.com/token",
+                client_id: installed.client_id,
+                client_secret: installed.client_secret,
+                scopes: ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"],
+                expiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : new Date(Date.now() + 3600000).toISOString()
+              }, null, 2), 'utf8');
+            } catch (_) {}
+
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('drive-auth-success');
+            }
+          } else if (error) {
+            res.writeHead(400, { 'Content-Type': 'text/html' });
+            res.end(`<html><body style="background:#0b0f19;color:red;padding:40px;font-family:sans-serif;"><h3>Auth Cancelled: ${error}</h3></body></html>`);
+            try { authHttpServer.close(); } catch (_) {}
+            authHttpServer = null;
+          }
+        } catch (e) {
+          console.error('OAuth callback error:', e);
+          res.writeHead(500, { 'Content-Type': 'text/html' });
+          res.end(`<html><body>Error: ${e.message}</body></html>`);
+          try { authHttpServer.close(); } catch (_) {}
+          authHttpServer = null;
+        }
+      });
+
+      authHttpServer.listen(0, () => {
+        port = authHttpServer.address().port;
+        const redirectUri = `http://localhost:${port}`;
+        const oAuth2Client = new google.auth.OAuth2(
+          installed.client_id,
+          installed.client_secret,
+          redirectUri
+        );
+
+        const authUrl = oAuth2Client.generateAuthUrl({
+          access_type: 'offline',
+          scope: [
+            'https://www.googleapis.com/auth/drive.file',
+            'https://www.googleapis.com/auth/drive'
+          ],
+          prompt: 'consent',
+        });
+
+        shell.openExternal(authUrl);
+        resolve({ success: true, authUrl, port });
+      });
+
+      setTimeout(() => {
+        if (authHttpServer) {
+          try { authHttpServer.close(); } catch (_) {}
+          authHttpServer = null;
+        }
+      }, 180000);
+    } catch (err) {
+      resolve({ success: false, error: err.message });
+    }
+  });
 });
 
 ipcMain.handle('google-auth-exchange', async (_, authCode) => {
@@ -681,11 +1085,24 @@ ipcMain.handle('google-auth-exchange', async (_, authCode) => {
     const oAuth2Client = new google.auth.OAuth2(
       installed.client_id,
       installed.client_secret,
-      'urn:ietf:wg:oauth:2.0:oob'
+      'http://localhost'
     );
 
     const { tokens } = await oAuth2Client.getToken(authCode.trim());
     store.set('google-tokens', tokens);
+
+    const vaultTokenPath = path.join('C:', 'Users', 'mukil', 'jarvis-core', 'storage', 'vault', 'google_drive_token.json');
+    try {
+      fs.writeFileSync(vaultTokenPath, JSON.stringify({
+        token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        token_uri: "https://oauth2.googleapis.com/token",
+        client_id: installed.client_id,
+        client_secret: installed.client_secret,
+        scopes: ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"],
+        expiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : new Date(Date.now() + 3600000).toISOString()
+      }, null, 2), 'utf8');
+    } catch (_) {}
 
     return { success: true };
   } catch (err) {
@@ -695,7 +1112,17 @@ ipcMain.handle('google-auth-exchange', async (_, authCode) => {
 
 ipcMain.handle('google-auth-status', async () => {
   const client = getDriveClient();
-  return { connected: !!client };
+  if (!client || !client.oAuth2Client) return { connected: false };
+  try {
+    const at = await client.oAuth2Client.getAccessToken();
+    if (at && at.token) {
+      return { connected: true };
+    }
+    return { connected: false, error: 'Token missing or expired' };
+  } catch (err) {
+    console.warn('Google Drive token validation check failed:', err.message);
+    return { connected: false, error: err.message };
+  }
 });
 
 ipcMain.handle('google-auth-disconnect', async () => {

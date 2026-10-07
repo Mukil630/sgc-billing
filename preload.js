@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Bill save + Drive upload + Local PDF
   saveAndUploadBill: (payload) => ipcRenderer.invoke('save-and-upload-bill', payload),
+  deleteBillFromDrive: (payload) => ipcRenderer.invoke('delete-bill-from-drive', payload),
   syncAllBills: (payload) => ipcRenderer.invoke('sync-all-bills', payload),
   saveLocalPdf: (payload) => ipcRenderer.invoke('save-local-pdf', payload),
   organizeDriveBills: () => ipcRenderer.invoke('organize-drive-bills'),
@@ -30,4 +31,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Utilities
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   printBill: (html) => ipcRenderer.invoke('print-bill', html),
+
+  // Monthly Automation & Reporting
+  generateMonthEndReport: (monthKey) => ipcRenderer.invoke('generate-month-end-report', monthKey),
+  ensureMonthFolder: () => ipcRenderer.invoke('ensure-month-folder'),
+  onBillsUpdated: (callback) => ipcRenderer.on('bills-updated', (_, bills) => callback(bills)),
 });

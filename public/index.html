@@ -9,17 +9,92 @@
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #0c0c14; color: #ede5d0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif; background: #0b0f19; color: #f9fafb; font-variant-numeric: tabular-nums; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: rgba(255,255,255,0.03); }
-  ::-webkit-scrollbar-thumb { background: rgba(255,200,74,0.3); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(255,200,74,0.5); }
-  input[type=number]::-webkit-inner-spin-button { opacity: 0.4; }
+  ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+  input[type=number]::-webkit-inner-spin-button { opacity: 0.3; }
   @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-  .fade-in { animation: fadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
-  .btn-hover:hover { filter: brightness(1.15); transform: translateY(-1px); }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+  .fade-in { animation: fadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1); }
+  .btn-hover:hover { filter: brightness(1.1); transform: translateY(-1px); }
   .btn-hover:active { transform: translateY(0); }
+
+  /* Advanced Dashboard Animations - Refined Micro-interactions */
+  @keyframes slideUpFade {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulseGlow {
+    0%, 100% { opacity: 0.9; }
+    50% { opacity: 1; filter: drop-shadow(0 0 4px rgba(244, 63, 94, 0.4)); }
+  }
+  @keyframes radarPing {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+    70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  }
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+
+  .stat-card-animated {
+    position: relative;
+    overflow: hidden;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .stat-card-animated:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+    border-color: rgba(59, 130, 246, 0.35) !important;
+  }
+  .stat-card-animated::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent);
+    transform: translateX(-100%);
+    pointer-events: none;
+  }
+  .stat-card-animated:hover::after {
+    animation: shimmer 0.7s ease-in-out;
+  }
+
+  .radar-beacon {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: rgba(78, 217, 122, 0.12);
+    border: 1px solid rgba(78, 217, 122, 0.35);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #4ed97a;
+  }
+  .radar-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #4ed97a;
+    animation: radarPing 2s infinite cubic-bezier(0.25, 1, 0.5, 1);
+  }
+
+  .pulse-badge-pending {
+    animation: pulseGlow 2.5s infinite ease-in-out;
+    display: inline-block;
+  }
+
+  .invoice-row-hover {
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .invoice-row-hover:hover {
+    background: rgba(255, 255, 255, 0.05) !important;
+    transform: scale(1.002);
+  }
 </style>
 </head>
 <body>
@@ -32,7 +107,8 @@ const isElectron = !!window.electronAPI;
 const api = window.electronAPI || {
   storeGet: async (k) => { try { const r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } catch { return null; } },
   storeSet: async (k, v) => { localStorage.setItem(k, JSON.stringify(v)); },
-   saveAndUploadBill: async ({ billData }) => ({ success: true, browserSaved: true, message: 'Saved in local storage' }),
+  saveAndUploadBill: async ({ billData }) => ({ success: true, browserSaved: true, message: 'Saved in local storage' }),
+  deleteBillFromDrive: async ({ billData }) => ({ success: true, message: 'Deleted' }),
   syncAllBills: async ({ billPayloads }) => ({ success: true, summary: { total: billPayloads.length, synced: billPayloads.length, updated: 0, failed: 0, results: [] } }),
   gmailAuthStart: async () => ({ success: true, message: 'Gmail auth requires Electron desktop app' }),
   gmailAuthExchange: async () => ({ success: false, error: 'Gmail auth requires Electron desktop app' }),
@@ -153,15 +229,52 @@ const COMMON_COUNTS = ["10s", "12s", "16s", "17s", "20s", "24s", "30s", "34s", "
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 const uid    = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
-const today  = () => new Date().toISOString().slice(0, 10);
-const fmt    = (n) => Number(n || 0).toFixed(2);
-const fmtINR = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const getLocalDateString = (d = new Date()) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+const today  = () => getLocalDateString();
+
+const getMonthKey = (d = new Date()) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+};
+
+const getRelativeMonthKey = (offsetMonths = 0, baseDate = new Date()) => {
+  const target = new Date(baseDate.getFullYear(), baseDate.getMonth() + offsetMonths, 15);
+  const y = target.getFullYear();
+  const m = String(target.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+};
+
+const getMonthLabel = (ym) => {
+  if (!ym) return '';
+  const [y, m] = ym.split('-');
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const mIdx = parseInt(m, 10) - 1;
+  return `${monthNames[mIdx] || m} ${y}`;
+};
+
+const getMonthShortLabel = (ym) => {
+  if (!ym) return '';
+  const [y, m] = ym.split('-');
+  const shortNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const mIdx = parseInt(m, 10) - 1;
+  return `${shortNames[mIdx] || m} ${y}`;
+};
+
+const fmt    = (n) => { const num = Number(n); return isNaN(num) ? '0.00' : num.toFixed(2); };
+const fmtINR = (n) => { const num = Number(n); return `₹${(isNaN(num) ? 0 : num).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; };
 
 function numWords(n) {
+  if (isNaN(n) || n === null || n === undefined) return 'Zero';
+  n = Math.round(Number(n) || 0);
+  if (n <= 0) return 'Zero';
   const a = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
   const b = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
-  n = Math.round(n);
-  if (n === 0) return 'Zero';
   if (n < 20)  return a[n];
   if (n < 100) return b[Math.floor(n/10)] + (n%10 ? ' '+a[n%10] : '');
   if (n < 1000) return a[Math.floor(n/100)]+' Hundred'+(n%100 ? ' '+numWords(n%100) : '');
@@ -171,16 +284,17 @@ function numWords(n) {
 }
 
 function calcAmount(kattu, kazhi, rate, count, countMap) {
-  const k  = Number(kattu) || 0;
-  const kz = Number(kazhi) || 0;
-  const r  = Number(rate)  || 0;
-  if (r === 0 || (k === 0 && kz === 0)) return 0;
+  const k  = parseFloat(kattu) || 0;
+  const kz = parseFloat(kazhi) || 0;
+  const r  = parseFloat(rate)  || 0;
+  if (isNaN(r) || r <= 0 || (k === 0 && kz === 0)) return 0;
   if (k === 0) return kz * r;
   if (kz === 0) return k * r;
   const countKey = (count || '').toString().trim().toLowerCase();
   const mapping  = (countMap || DEFAULT_COUNT_MAP).find(m => m.count.toLowerCase() === countKey);
-  if (!mapping || !Number(mapping.kazhi)) return k * r + kz * r;
-  return (k * r) + (kz * (r / Number(mapping.kazhi)));
+  const kazhiDiv = mapping && Number(mapping.kazhi) ? Number(mapping.kazhi) : 0;
+  if (!kazhiDiv) return k * r + kz * r;
+  return (k * r) + (kz * (r / kazhiDiv));
 }
 
 function getEffective(items, idx, field) {
@@ -216,8 +330,92 @@ function getBillFinancials(bill) {
   return { totalPaid, balance, computedStatus };
 }
 
+// ── ULTRA-STYLISH SIGNATURE STYLES FOR MUKIL ──────────────────────────────────
+const SIGNATURE_STYLES = {
+  style1: {
+    id: 'style1',
+    name: 'Stark Velocity',
+    subtitle: 'Ultra-Sleek & Razor Sharp',
+    desc: 'High-speed sharp M crest with dynamic arrow-taper underline flourish',
+    svg: `<svg viewBox="0 0 170 65" width="145" height="50" xmlns="http://www.w3.org/2000/svg" style="display:block;margin-left:auto">
+      <path d="M 12 50 C 8 36, 10 18, 16 10 C 22 4, 28 20, 31 38 C 34 20, 42 6, 48 8 C 54 10, 52 30, 53 46" fill="none" stroke="#0f2b5c" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M 59 34 C 61 44, 70 46, 73 38 L 73 32 C 73 20, 83 14, 85 24 C 86 34, 76 38, 87 46" fill="none" stroke="#0f2b5c" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M 96 30 L 96 46" fill="none" stroke="#0f2b5c" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="96" cy="22" r="2.4" fill="#1e40af"/>
+      <path d="M 105 8 C 103 24, 104 42, 107 46 C 112 50, 126 44, 136 32" fill="none" stroke="#0f2b5c" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M 6 56 C 50 48, 115 48, 164 42" fill="none" stroke="#0f2b5c" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M 148 38 L 165 42 L 152 48" fill="none" stroke="#1e40af" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`
+  },
+  style2: {
+    id: 'style2',
+    name: 'Royal Calligraphy',
+    subtitle: 'Classic Prestige & Diamond Flourish',
+    desc: 'Grand initial ribbon loop into M, diamond i-dot, with dual prestige flourish dots',
+    svg: `<svg viewBox="0 0 170 65" width="145" height="50" xmlns="http://www.w3.org/2000/svg" style="display:block;margin-left:auto">
+      <path d="M 22 28 C 10 24, 4 34, 8 44 C 12 50, 20 46, 22 36 C 26 18, 30 8, 36 8 C 42 8, 41 34, 43 44 C 47 24, 55 10, 62 10 C 68 10, 66 32, 66 44" fill="none" stroke="#091a36" stroke-width="2.8" stroke-linecap="round"/>
+      <path d="M 72 32 C 74 42, 82 44, 86 38 L 86 16 C 86 12, 94 14, 94 24 C 94 34, 88 38, 97 44" fill="none" stroke="#091a36" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M 106 30 L 106 44" fill="none" stroke="#091a36" stroke-width="2.2" stroke-linecap="round"/>
+      <polygon points="106,18 109,22 106,26 103,22" fill="#091a36"/>
+      <path d="M 114 8 C 111 26, 112 44, 116 48 C 122 54, 140 46, 148 34" fill="none" stroke="#091a36" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M 14 56 C 60 50, 110 50, 155 52" fill="none" stroke="#091a36" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="148" cy="58" r="2" fill="#091a36"/>
+      <circle cx="156" cy="58" r="2.5" fill="#091a36"/>
+    </svg>`
+  },
+  style3: {
+    id: 'style3',
+    name: 'S. Mukilarasu (Official)',
+    subtitle: 'MD / Partner Monogram',
+    desc: 'Official Managing Director & Partner signature format with intertwined initial S.',
+    svg: `<svg viewBox="0 0 175 65" width="150" height="50" xmlns="http://www.w3.org/2000/svg" style="display:block;margin-left:auto">
+      <path d="M 26 16 C 16 12, 8 18, 10 26 C 12 36, 28 32, 28 42 C 28 50, 16 52, 10 48" fill="none" stroke="#0d2a5e" stroke-width="2.8" stroke-linecap="round"/>
+      <circle cx="34" cy="46" r="2.2" fill="#0d2a5e"/>
+      <path d="M 44 46 C 40 28, 46 10, 52 10 C 58 10, 60 28, 62 44 C 66 26, 73 12, 78 12 C 84 12, 84 32, 86 46" fill="none" stroke="#0d2a5e" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M 94 32 C 96 42, 102 44, 106 38 L 106 32 C 106 20, 116 16, 116 26 C 116 34, 110 38, 118 44" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="128" cy="22" r="2.2" fill="#0d2a5e"/>
+      <path d="M 128 28 L 128 44" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M 136 10 C 135 24, 136 40, 138 46 C 142 52, 156 44, 164 32" fill="none" stroke="#0d2a5e" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M 36 56 C 80 50, 130 50, 170 48" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="158" cy="56" r="2" fill="#0d2a5e"/>
+      <circle cx="166" cy="56" r="2.5" fill="#0d2a5e"/>
+    </svg>`
+  },
+  style4: {
+    id: 'style4',
+    name: 'Infinity Flourish',
+    subtitle: 'Continuous Fluid Loop (∞)',
+    desc: 'Expressive cursive that loops into an artistic infinity baseline flourish',
+    svg: `<svg viewBox="0 0 170 65" width="145" height="50" xmlns="http://www.w3.org/2000/svg" style="display:block;margin-left:auto">
+      <path d="M 16 46 C 12 30, 14 12, 22 10 C 30 8, 30 36, 34 44 C 38 22, 45 12, 52 12 C 58 12, 56 36, 58 44" fill="none" stroke="#1e3a8a" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M 66 32 C 68 42, 76 44, 80 38 L 80 32" fill="none" stroke="#1e3a8a" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M 88 12 L 88 44 M 88 32 Q 96 26 94 36 L 102 44" fill="none" stroke="#1e3a8a" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="110" cy="22" r="2.2" fill="#1e3a8a"/>
+      <path d="M 110 28 L 110 44" fill="none" stroke="#1e3a8a" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M 118 10 C 117 24, 118 40, 120 44 C 123 48, 134 44, 142 34" fill="none" stroke="#1e3a8a" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M 12 54 C 35 48, 70 48, 95 53 C 115 57, 135 46, 145 52 C 155 58, 138 62, 125 56 C 112 50, 130 46, 158 50" fill="none" stroke="#1e3a8a" stroke-width="2" stroke-linecap="round"/>
+    </svg>`
+  },
+  style5: {
+    id: 'style5',
+    name: 'VIP Autograph',
+    subtitle: 'High-Impact Founder Swagger',
+    desc: 'Bold sweeping entry loop, high looped k, and sharp dual-tone baseline underline',
+    svg: `<svg viewBox="0 0 170 65" width="145" height="50" xmlns="http://www.w3.org/2000/svg" style="display:block;margin-left:auto">
+      <path d="M 8 36 C 8 20, 20 12, 26 12 C 34 12, 32 40, 36 46 C 40 26, 48 14, 56 14 C 64 14, 60 38, 62 46" fill="none" stroke="#111827" stroke-width="2.8" stroke-linecap="round"/>
+      <path d="M 70 32 C 72 42, 80 44, 84 38 L 84 14 C 84 10, 94 14, 94 26 C 94 36, 88 40, 98 46" fill="none" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="108" cy="22" r="2.2" fill="#111827"/>
+      <path d="M 108 28 L 108 46" fill="none" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M 116 10 C 115 26, 116 42, 120 46 C 126 52, 142 42, 150 28" fill="none" stroke="#111827" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M 12 56 C 55 52, 110 52, 155 48" fill="none" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M 130 56 L 158 52" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round"/>
+    </svg>`
+  }
+};
+
 // ── GENERATE BILL HTML (OFFICIAL SGC TEMPLATE) ────────────────────────────────
 function generateBillHTML(bill, company = DEFAULT_COMPANY) {
+  const activeSigSvg = (SIGNATURE_STYLES[company.signatureStyle] || SIGNATURE_STYLES.style1).svg;
   const resolved = (bill.items || []).map((it, idx) => ({
     ...it,
     _delNo: getEffective(bill.items, idx, 'delNo'),
@@ -334,18 +532,9 @@ function generateBillHTML(bill, company = DEFAULT_COMPANY) {
         </tr>
         <tr><td colspan="2" style="border:1px solid #bbd;padding:6px 10px;text-align:right;font-size:11px;font-weight:bold;color:#1a3a6b">For ${company.name||'SRI GANAPATHY COLOURS'}</td></tr>
         <tr><td colspan="2" style="border:1px solid #bbd;padding:16px 16px 10px;text-align:right">
-          <svg width="110" height="44" viewBox="0 0 140 55" xmlns="http://www.w3.org/2000/svg" style="display:block;margin-left:auto">
-            <path d="M8,42 C8,38 9,30 10,26 C11,22 12,20 13,22 C14,24 15,28 16,32 C17,36 18,38 19,36 C20,34 21,30 22,26 C23,22 24,20 25,22 C26,26 27,34 27,42" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
-            <path d="M31,28 C31,34 31,40 32,42 C33,44 35,44 37,42 C39,40 40,36 40,30 L40,28" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
-            <path d="M40,28 L40,44 C40,46 41,47 42,47 C43,47 44,46 44,44" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
-            <path d="M48,18 L48,44" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
-            <path d="M48,33 C50,31 54,28 57,27" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
-            <path d="M51,31 C53,34 56,38 58,44" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
-            <path d="M63,28 L63,44" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
-            <circle cx="63" cy="22" r="2" fill="#0d2a5e"/>
-            <path d="M68,18 C68,24 68,34 69,40 C70,44 71,46 73,46 C74,46 75,45 75,44" fill="none" stroke="#0d2a5e" stroke-width="2.2" stroke-linecap="round"/>
-            <path d="M4,50 C20,47 50,46 80,48 C90,49 95,50 100,49" fill="none" stroke="#0d2a5e" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
-          </svg>
+          ${company.signatureImage ? `
+            <img src="${company.signatureImage}" style="max-height:48px;max-width:140px;display:block;margin-left:auto;object-fit:contain" alt="Signature" />
+          ` : activeSigSvg}
           <div style="font-size:10px;color:#444;margin-top:2px">Authorised Signature</div>
         </td></tr>
       </tbody></table>
@@ -528,47 +717,44 @@ function exportBillsToCSV(bills) {
   return "\uFEFF" + [headers.join(','), ...rows].join('\r\n');
 }
 
-// ── UI STYLES ─────────────────────────────────────────────────────────────────
+// ── UI STYLES (STRICT 3-COLOR MINIMALIST FINTECH) ─────────────────────────────
+// Color 1: Deep Slate Canvas (#0b0f19 / #111827)
+// Color 2: Crisp White & Slate Text (#ffffff / #94a3b8)
+// Color 3: Precision Royal Blue Accent (#2563eb)
 const C = {
-  bg:'#0c0c14', surface:'rgba(255,255,255,0.04)', surfaceHover:'rgba(255,255,255,0.07)',
-  border:'rgba(255,210,80,0.18)', borderMuted:'rgba(255,255,255,0.08)',
-  gold:'#ffc84a', goldGlow:'rgba(255,200,74,0.3)', text:'#ede5d0', textMuted:'rgba(237,229,208,0.5)',
-  green:'#4ed97a', red:'#ff6b6b', blue:'#7bc8ff', purple:'#b39ddb', orange:'#ffaa44', drive:'#34a853',
+  bg:'#0b0f19', surface:'#111827', surfaceHover:'#1e293b',
+  border:'rgba(255,255,255,0.08)', borderMuted:'rgba(255,255,255,0.04)',
+  gold:'#2563eb', goldGlow:'rgba(37,99,235,0.25)', text:'#ffffff', textMuted:'#94a3b8',
+  green:'#2563eb', red:'#f43f5e', blue:'#2563eb', purple:'#2563eb', orange:'#94a3b8', drive:'#2563eb',
 };
 
 const S = {
-  app: { fontFamily:"'Segoe UI',system-ui,-apple-system,sans-serif", minHeight:'100vh', background:C.bg, color:C.text },
-  nav: { background:'rgba(10,10,18,0.98)', borderBottom:`1px solid ${C.border}`, padding:'0 24px', display:'flex', alignItems:'center', gap:4, position:'sticky', top:0, zIndex:100, backdropFilter:'blur(8px)', flexWrap:'wrap' },
-  navBrand: { fontSize:13, fontWeight:800, color:C.gold, letterSpacing:2.5, textTransform:'uppercase', padding:'16px 0', marginRight:24, display:'flex', alignItems:'center', gap:8 },
-  navTab: (a) => ({ padding:'16px 14px', fontSize:11, letterSpacing:1.5, textTransform:'uppercase', cursor:'pointer', color:a?C.gold:C.textMuted, background:'none', border:'none', borderBottom:`3px solid ${a?C.gold:'transparent'}`, fontFamily:'inherit', fontWeight:a?700:500, transition:'all 0.15s' }),
+  app: { fontFamily:"-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,sans-serif", minHeight:'100vh', background:C.bg, color:C.text },
+  nav: { background:'rgba(11,15,25,0.96)', borderBottom:`1px solid ${C.border}`, padding:'0 24px', display:'flex', alignItems:'center', gap:4, position:'sticky', top:0, zIndex:100, backdropFilter:'blur(12px)', flexWrap:'wrap' },
+  navBrand: { fontSize:13, fontWeight:800, color:'#ffffff', letterSpacing:2, textTransform:'uppercase', padding:'16px 0', marginRight:24, display:'flex', alignItems:'center', gap:8 },
+  navTab: (a) => ({ padding:'16px 14px', fontSize:11, letterSpacing:1.2, textTransform:'uppercase', cursor:'pointer', color:a?'#ffffff':C.textMuted, background:'none', border:'none', borderBottom:`2px solid ${a?'#2563eb':'transparent'}`, fontFamily:'inherit', fontWeight:a?700:500, transition:'all 0.15s' }),
   main: { padding:'24px', maxWidth:1340, margin:'0 auto' },
-  card: (accent='#ffc84a') => ({ background:C.surface, border:`1px solid ${accent}28`, borderRadius:14, padding:'20px 24px', transition:'all 0.2s', boxShadow:'0 4px 20px rgba(0,0,0,0.25)' }),
-  section: { background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:'24px', marginBottom:20, boxShadow:'0 6px 30px rgba(0,0,0,0.2)' },
-  secTitle: { fontSize:11, letterSpacing:3, textTransform:'uppercase', color:C.gold, fontWeight:700, marginBottom:16, display:'flex', alignItems:'center', gap:8 },
-  label: { fontSize:10, letterSpacing:1.8, textTransform:'uppercase', color:C.textMuted, marginBottom:6, display:'block', fontWeight:600 },
-  input: { background:'rgba(255,255,255,0.06)', border:`1px solid ${C.border}`, borderRadius:8, padding:'10px 14px', color:C.text, fontSize:13, width:'100%', fontFamily:'inherit', outline:'none', boxSizing:'border-box', transition:'border-color 0.15s' },
+  card: (accent='#2563eb') => ({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:'20px 24px', transition:'all 0.2s', boxShadow:'0 4px 20px rgba(0,0,0,0.2)' }),
+  section: { background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:'24px', marginBottom:20, boxShadow:'0 4px 20px rgba(0,0,0,0.18)' },
+  secTitle: { fontSize:11, letterSpacing:2, textTransform:'uppercase', color:'#ffffff', fontWeight:700, marginBottom:16, display:'flex', alignItems:'center', gap:8 },
+  label: { fontSize:10, letterSpacing:1.2, textTransform:'uppercase', color:C.textMuted, marginBottom:6, display:'block', fontWeight:600 },
+  input: { background:'rgba(255,255,255,0.04)', border:`1px solid ${C.border}`, borderRadius:6, padding:'10px 14px', color:C.text, fontSize:13, width:'100%', fontFamily:'inherit', outline:'none', boxSizing:'border-box', transition:'border-color 0.15s' },
   btn: (v) => ({
-    padding:'9px 18px', borderRadius:8, fontSize:11, letterSpacing:1.2, textTransform:'uppercase', cursor:'pointer', fontFamily:'inherit', fontWeight:700, transition:'all 0.15s', display:'inline-flex', alignItems:'center', gap:6, justifyContent:'center',
-    ...(v==='primary' ? { background:C.gold, border:'none', color:'#0c0c14', boxShadow:`0 2px 12px ${C.goldGlow}` }
-      : v==='success'  ? { background:'rgba(78,217,122,0.18)', border:'1px solid rgba(78,217,122,0.45)', color:C.green }
-      : v==='danger'   ? { background:'rgba(255,107,107,0.15)', border:'1px solid rgba(255,107,107,0.4)', color:C.red }
-      : v==='drive'    ? { background:'rgba(52,168,83,0.18)', border:'1px solid rgba(52,168,83,0.45)', color:C.drive }
-      : v==='blue'     ? { background:'rgba(123,200,255,0.18)', border:'1px solid rgba(123,200,255,0.45)', color:C.blue }
-      : v==='whatsapp' ? { background:'rgba(37,211,102,0.18)', border:'1px solid rgba(37,211,102,0.45)', color:'#25d366' }
-      : { background:'rgba(255,255,255,0.06)', border:`1px solid ${C.border}`, color:C.gold })
+    padding:'8px 16px', borderRadius:6, fontSize:11, letterSpacing:0.8, textTransform:'uppercase', cursor:'pointer', fontFamily:'inherit', fontWeight:600, transition:'all 0.15s ease', display:'inline-flex', alignItems:'center', gap:6, justifyContent:'center',
+    ...(v==='primary' ? { background:'#2563eb', border:'none', color:'#ffffff', boxShadow:'0 2px 10px rgba(37,99,235,0.3)' }
+      : v==='danger'   ? { background:'rgba(244,63,94,0.12)', border:'1px solid rgba(244,63,94,0.3)', color:'#fb7185' }
+      : { background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.1)', color:'#ffffff' })
   }),
-  th: { padding:'10px 12px', textAlign:'left', fontSize:10, letterSpacing:1.5, textTransform:'uppercase', color:C.textMuted, borderBottom:`1px solid ${C.border}`, fontWeight:700 },
+  th: { padding:'10px 12px', textAlign:'left', fontSize:10, letterSpacing:1, textTransform:'uppercase', color:C.textMuted, borderBottom:`1px solid ${C.border}`, fontWeight:700 },
   td: { padding:'12px 12px', borderBottom:'1px solid rgba(255,255,255,0.04)', verticalAlign:'middle', fontSize:13 },
-  badge: (c) => ({ display:'inline-flex', alignItems:'center', gap:4, padding:'4px 10px', borderRadius:20, fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:0.8,
-    ...(c==='green'  ? { background:'rgba(78,217,122,0.15)',  color:C.green,  border:'1px solid rgba(78,217,122,0.35)' }
-      : c==='orange' ? { background:'rgba(255,170,68,0.15)',  color:C.orange, border:'1px solid rgba(255,170,68,0.35)' }
-      : c==='blue'   ? { background:'rgba(123,200,255,0.15)', color:C.blue,   border:'1px solid rgba(123,200,255,0.35)' }
-      : c==='drive'  ? { background:'rgba(52,168,83,0.15)',   color:C.drive,  border:'1px solid rgba(52,168,83,0.35)' }
-      : { background:'rgba(255,107,107,0.15)', color:C.red, border:'1px solid rgba(255,107,107,0.35)' }) }),
+  badge: (c) => ({ display:'inline-flex', alignItems:'center', gap:4, padding:'4px 10px', borderRadius:20, fontSize:11, fontWeight:600, textTransform:'uppercase', letterSpacing:0.8,
+    ...(c==='green'  ? { background:'rgba(37,99,235,0.15)',  color:'#60a5fa',  border:'1px solid rgba(37,99,235,0.3)' }
+      : c==='danger' ? { background:'rgba(244,63,94,0.12)', color:'#fb7185', border:'1px solid rgba(244,63,94,0.3)' }
+      : { background:'rgba(255,255,255,0.05)', color:'#cbd5e1', border:'1px solid rgba(255,255,255,0.12)' }) }),
 };
 
 // ── AUTOCOMPLETE MODAL / DROPDOWN ────────────────────────────────────────────
-function AutocompleteInput({ value, options, onChange, onSelect, placeholder, style, renderItem }) {
+function AutocompleteInput({ value = '', options = [], onChange, onSelect, placeholder, style, renderItem }) {
   const [open, setOpen] = useState(false);
   const [filtered, setFiltered] = useState([]);
   const ref = useRef(null);
@@ -581,20 +767,31 @@ function AutocompleteInput({ value, options, onChange, onSelect, placeholder, st
 
   const handleChange = (val) => {
     onChange(val);
-    if (!val.trim()) { setFiltered([]); setOpen(false); return; }
-    const f = options.filter(opt => {
-      const text = typeof opt === 'string' ? opt : (opt.name || opt.count || '');
-      return text.toLowerCase().includes(val.toLowerCase());
+    const s = String(val || '').trim();
+    if (!s) { setFiltered([]); setOpen(false); return; }
+    const opts = Array.isArray(options) ? options : [];
+    const f = opts.filter(opt => {
+      const text = typeof opt === 'string' ? opt : (opt?.name || opt?.count || '');
+      return text.toLowerCase().includes(s.toLowerCase());
     }).slice(0, 8);
     setFiltered(f);
     setOpen(f.length > 0);
   };
 
+  const safeVal = value === undefined || value === null ? '' : String(value);
+
   return (
     <div ref={ref} style={{ position:'relative', width:'100%' }}>
-      <input style={style} value={value} onChange={e=>handleChange(e.target.value)}
-        onFocus={()=>{ if (value.trim() && filtered.length > 0) setOpen(true); }}
-        placeholder={placeholder} autoComplete="off" />
+      <input
+        style={style}
+        value={safeVal}
+        onChange={e => handleChange(e.target.value)}
+        onFocus={() => {
+          if (safeVal.trim() && filtered.length > 0) setOpen(true);
+        }}
+        placeholder={placeholder}
+        autoComplete="off"
+      />
       {open && (
         <div style={{ position:'absolute', top:'100%', left:0, right:0, zIndex:200, background:'#121422', border:'1px solid rgba(59,130,246,0.5)', borderRadius:8, boxShadow:'0 10px 30px rgba(0,0,0,0.8)', marginTop:4, maxHeight:220, overflowY:'auto' }}>
           {filtered.map((item, i) => (
@@ -603,7 +800,7 @@ function AutocompleteInput({ value, options, onChange, onSelect, placeholder, st
               onMouseEnter={e=>e.currentTarget.style.background='rgba(59,130,246,0.2)'}
               onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
               {renderItem ? renderItem(item) : (
-                <div style={{ fontSize:13, color:'#e8f0ff', fontWeight:600 }}>{typeof item === 'string' ? item : item.name}</div>
+                <div style={{ fontSize:13, color:'#e8f0ff', fontWeight:600 }}>{typeof item === 'string' ? item : (item?.name || item?.count || '')}</div>
               )}
             </div>
           ))}
@@ -860,6 +1057,199 @@ function CustomerLedgerModal({ customer, bills, onClose, onEditBill, company }) 
   );
 }
 
+// ── MONTH-END FINANCIAL AUDIT & CLOSING MODAL ────────────────────────────────
+function MonthEndModal({ bills, company, onClose }) {
+  const availableMonths = useMemo(() => {
+    const set = new Set();
+    bills.forEach(b => { if (b.date) set.add(b.date.slice(0, 7)); });
+    set.add(getMonthKey());
+    return Array.from(set).sort().reverse();
+  }, [bills]);
+
+  const [selectedMonth, setSelectedMonth] = useState(availableMonths[0] || getMonthKey());
+  const [downloadMsg, setDownloadMsg] = useState('');
+
+  const monthBills = bills.filter(b => b.date && b.date.startsWith(selectedMonth));
+  const totalTurnover = monthBills.reduce((s, b) => s + Number(b.netAmount || 0), 0);
+  const totalSub = monthBills.reduce((s, b) => s + Number(b.subtotal || (b.netAmount / 1.05)), 0);
+  const totalCgst = monthBills.reduce((s, b) => s + Number(b.cgst || (b.subtotal * 0.025)), 0);
+  const totalSgst = monthBills.reduce((s, b) => s + Number(b.sgst || (b.subtotal * 0.025)), 0);
+  const totalPaid = monthBills.reduce((s, b) => s + getBillFinancials(b).totalPaid, 0);
+  const totalPending = Math.max(0, totalTurnover - totalPaid);
+  const syncedCount = monthBills.filter(b => b.driveUrl).length;
+
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const [y, m] = selectedMonth.split('-');
+  const monthName = `${monthNames[parseInt(m, 10) - 1] || m} ${y}`;
+
+  const customerMap = {};
+  monthBills.forEach(b => {
+    const c = b.customer || 'Unknown';
+    if (!customerMap[c]) customerMap[c] = { name: c, count: 0, total: 0, pending: 0 };
+    customerMap[c].count++;
+    customerMap[c].total += Number(b.netAmount || 0);
+    customerMap[c].pending += getBillFinancials(b).balance;
+  });
+
+  const handleDownloadReport = () => {
+    const content = `========================================================================
+SRI GANAPATHI COLOURS — MONTH-END CLOSING AUDIT REPORT
+========================================================================
+Billing Month: ${monthName} (${selectedMonth})
+Generated On: ${new Date().toLocaleString()}
+Company: ${company?.name || 'SRI GANAPATHI COLOURS'} | GSTIN: ${company?.gstin || '33HKSPS1735K1ZH'}
+
+FINANCIAL SUMMARY:
+------------------------------------------------------------------------
+Total Bills Generated:    ${monthBills.length}
+Gross Coolie Subtotal:    ₹${totalSub.toFixed(2)}
+Total CGST (2.5%):        ₹${totalCgst.toFixed(2)}
+Total SGST (2.5%):        ₹${totalSgst.toFixed(2)}
+Total GST (5.0%):         ₹${(totalCgst + totalSgst).toFixed(2)}
+NET INVOICED TURNOVER:    ₹${totalTurnover.toFixed(2)}
+Total Amount Received:    ₹${totalPaid.toFixed(2)}
+TOTAL OUTSTANDING DUE:    ₹${totalPending.toFixed(2)}
+
+GOOGLE DRIVE BACKUP AUDIT:
+------------------------------------------------------------------------
+Master Vault Folder ID:   11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9
+Month Subfolder:          ${selectedMonth} (${monthName})
+Bills Backed Up to Drive: ${syncedCount} / ${monthBills.length}
+
+CUSTOMER BREAKDOWN:
+------------------------------------------------------------------------
+${Object.values(customerMap).map(c => `• ${c.name} | ${c.count} Bill(s) | Total: ₹${c.total.toFixed(2)} | Overdue: ₹${c.pending.toFixed(2)}`).join('\n')}
+
+========================================================================
+`;
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `SGC_${monthName.replace(' ', '_')}_Month_End_Report.txt`;
+    a.click();
+    setDownloadMsg('✅ Report downloaded!');
+    setTimeout(() => setDownloadMsg(''), 3000);
+  };
+
+  return (
+    <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.8)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(5px)', padding:16 }}>
+      <div className="fade-in" style={{ background:'#111726', border:'1px solid #1e293b', borderRadius:16, width:'100%', maxWidth:840, maxHeight:'90vh', overflowY:'auto', padding:24, boxShadow:'0 20px 50px rgba(0,0,0,0.7)' }}>
+        
+        {/* Header */}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', borderBottom:'1px solid rgba(255,255,255,0.08)', paddingBottom:16, marginBottom:20 }}>
+          <div>
+            <div style={{ fontSize:11, letterSpacing:2, color:C.gold, fontWeight:700, textTransform:'uppercase' }}>Autonomous Financial Engine</div>
+            <div style={{ fontSize:22, fontWeight:800, color:'#fff', marginTop:2 }}>📅 Month-End Closing & Executive Audit</div>
+            <div style={{ fontSize:12, color:C.textMuted, marginTop:4 }}>Review turnover, GST liability, customer receivables, and Drive backups for any month.</div>
+          </div>
+          <button style={{ ...S.btn('danger'), padding:'6px 12px', fontSize:12 }} onClick={onClose}>✕ Close</button>
+        </div>
+
+        {/* Month Selector Pills */}
+        <div style={{ display:'flex', gap:8, overflowX:'auto', paddingBottom:10, marginBottom:20, alignItems:'center' }}>
+          <span style={{ fontSize:11, fontWeight:700, color:C.textMuted, marginRight:4 }}>SELECT MONTH:</span>
+          {availableMonths.map(ym => {
+            const [yr, mn] = ym.split('-');
+            const lbl = `${monthNames[parseInt(mn, 10) - 1] || mn} ${yr}`;
+            const active = selectedMonth === ym;
+            return (
+              <button
+                key={ym}
+                style={{
+                  ...S.btn(active ? 'primary' : ''),
+                  background: active ? 'linear-gradient(135deg, #1e4d8c 0%, #2563eb 100%)' : 'rgba(255,255,255,0.04)',
+                  border: active ? '1px solid #60a5fa' : '1px solid rgba(255,255,255,0.08)',
+                  padding:'7px 14px',
+                  fontSize:11,
+                  fontWeight: active ? 700 : 500,
+                  borderRadius:8
+                }}
+                onClick={() => setSelectedMonth(ym)}
+              >
+                {lbl}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Key Metrics Grid */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))', gap:12, marginBottom:22 }}>
+          <div style={{ ...S.card(C.gold), padding:14 }}>
+            <div style={{ fontSize:10, color:C.textMuted, letterSpacing:1.5, textTransform:'uppercase', fontWeight:700 }}>Total Invoiced</div>
+            <div style={{ fontSize:20, fontWeight:800, color:C.gold, marginTop:4 }}>₹{totalTurnover.toLocaleString('en-IN', {minimumFractionDigits:2})}</div>
+            <div style={{ fontSize:11, color:C.textMuted, marginTop:2 }}>{monthBills.length} Invoices</div>
+          </div>
+          <div style={{ ...S.card(C.blue), padding:14 }}>
+            <div style={{ fontSize:10, color:C.textMuted, letterSpacing:1.5, textTransform:'uppercase', fontWeight:700 }}>GST 5.0% (CGST+SGST)</div>
+            <div style={{ fontSize:20, fontWeight:800, color:C.blue, marginTop:4 }}>₹{(totalCgst+totalSgst).toLocaleString('en-IN', {minimumFractionDigits:2})}</div>
+            <div style={{ fontSize:11, color:C.textMuted, marginTop:2 }}>₹{totalCgst.toFixed(2)} CGST + ₹{totalSgst.toFixed(2)} SGST</div>
+          </div>
+          <div style={{ ...S.card(totalPending > 0 ? C.red : C.green), padding:14 }}>
+            <div style={{ fontSize:10, color:C.textMuted, letterSpacing:1.5, textTransform:'uppercase', fontWeight:700 }}>Outstanding Balance</div>
+            <div style={{ fontSize:20, fontWeight:800, color: totalPending > 0 ? C.red : C.green, marginTop:4 }}>₹{totalPending.toLocaleString('en-IN', {minimumFractionDigits:2})}</div>
+            <div style={{ fontSize:11, color:C.textMuted, marginTop:2 }}>₹{totalPaid.toFixed(2)} Collected</div>
+          </div>
+          <div style={{ ...S.card(C.drive), padding:14 }}>
+            <div style={{ fontSize:10, color:C.textMuted, letterSpacing:1.5, textTransform:'uppercase', fontWeight:700 }}>Drive Vault Backup</div>
+            <div style={{ fontSize:20, fontWeight:800, color:C.drive, marginTop:4 }}>{syncedCount} / {monthBills.length}</div>
+            <div style={{ fontSize:11, color:C.textMuted, marginTop:2 }}>{syncedCount === monthBills.length ? '✅ 100% Backed Up' : '⚠️ Pending Auto-Sync'}</div>
+          </div>
+        </div>
+
+        {/* Customer Breakdown Table */}
+        <div style={{ background:'rgba(255,255,255,0.02)', border:'1px solid rgba(255,255,255,0.06)', borderRadius:12, padding:16, marginBottom:20 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:'#fff', marginBottom:12 }}>Customer-Wise Billing & Receivables ({monthName})</div>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11.5 }}>
+            <thead>
+              <tr style={{ background:'rgba(255,255,255,0.04)', color:C.textMuted }}>
+                <th style={{ ...S.th, textAlign:'left' }}>Customer Name</th>
+                <th style={S.th}>Bills Count</th>
+                <th style={{ ...S.th, textAlign:'right' }}>Total Billed (₹)</th>
+                <th style={{ ...S.th, textAlign:'right' }}>Outstanding (₹)</th>
+                <th style={{ ...S.th, textAlign:'right' }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.values(customerMap).map(c => (
+                <tr key={c.name} style={{ borderBottom:'1px solid rgba(255,255,255,0.05)' }}>
+                  <td style={{ ...S.td, fontWeight:700, color:'#fff' }}>{c.name}</td>
+                  <td style={{ ...S.td, textAlign:'center' }}>{c.count}</td>
+                  <td style={{ ...S.td, textAlign:'right', fontWeight:700, color:C.gold }}>₹{c.total.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+                  <td style={{ ...S.td, textAlign:'right', fontWeight:700, color: c.pending > 0 ? C.red : C.green }}>₹{c.pending.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+                  <td style={{ ...S.td, textAlign:'right' }}>
+                    <span style={S.badge(c.pending === 0 ? 'green' : 'orange')}>
+                      {c.pending === 0 ? '✓ Paid' : 'Pending'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {Object.keys(customerMap).length === 0 && (
+                <tr><td colSpan={5} style={{ ...S.td, textAlign:'center', color:C.textMuted, padding:20 }}>No bills found for {monthName}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Action Buttons */}
+        <div style={{ display:'flex', gap:10, justifyContent:'flex-end', alignItems:'center', borderTop:'1px solid rgba(255,255,255,0.08)', paddingTop:16 }}>
+          {downloadMsg && <span style={{ fontSize:12, color:C.green, fontWeight:700, marginRight:'auto' }}>{downloadMsg}</span>}
+          <button style={{ ...S.btn('primary'), padding:'9px 18px', fontSize:12 }} onClick={handleDownloadReport}>
+            📥 Download Audit Report (.txt)
+          </button>
+          <button
+            style={{ ...S.btn('drive'), padding:'9px 18px', fontSize:12 }}
+            onClick={()=>api.openExternal('https://drive.google.com/drive/folders/11KMBP0HHa2AFl30zjL8-a_-BQk9MgWM9?usp=drive_link')}>
+            ☁ Open Drive Master Vault ↗
+          </button>
+          <button style={{ ...S.btn(), padding:'9px 16px', fontSize:12 }} onClick={onClose}>Done</button>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 // ── NEW & EDIT BILL FORM ──────────────────────────────────────────────────────
 function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdit, driveConnected, company }) {
   const nextNo = editBill ? editBill.billNo : bills.length > 0 ? Math.max(...bills.map(b=>Number(b.billNo)||0))+1 : 1;
@@ -910,12 +1300,12 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
     setForm(f => ({ ...f, items: [...f.items, { ...it, id:uid() }] }));
   };
 
-  const sub     = form.items.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const sub     = form.items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
   const cgst    = sub * 0.025;
   const sgst    = sub * 0.025;
   const rawNet  = sub + cgst + sgst;
-  const net     = Math.round(rawNet);
-  const rounded = net - rawNet;
+  const net     = isNaN(rawNet) ? 0 : Math.round(rawNet);
+  const rounded = isNaN(net - rawNet) ? 0 : (net - rawNet);
 
   const buildBillObject = () => ({
     ...form,
@@ -935,6 +1325,9 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
     setErrMsg('');
 
     const bill = buildBillObject();
+    if (!form.id) {
+      setForm(f => ({ ...f, id: bill.id }));
+    }
     await onSave(bill);
 
     const htmlContent = generateBillHTML(bill, company);
@@ -996,7 +1389,7 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
     }
   };
 
-  const bi  = { background:'rgba(26,58,107,0.3)', border:'1px solid rgba(59,130,246,0.45)', borderRadius:6, padding:'7px 8px', color:'#e8f0ff', fontSize:12, width:'100%', fontFamily:'inherit', outline:'none', boxSizing:'border-box', textAlign:'center' };
+  const bi  = { background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:6, padding:'7px 8px', color:'#f9fafb', fontSize:12, width:'100%', fontFamily:'inherit', outline:'none', boxSizing:'border-box', textAlign:'center', fontVariantNumeric:'tabular-nums' };
   const biL = { ...bi, textAlign:'left' };
 
   return (
@@ -1004,11 +1397,11 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
       {/* Header bar */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:18, flexWrap:'wrap', gap:12 }}>
         <div>
-          <div style={{ fontSize:10, letterSpacing:4, textTransform:'uppercase', color:C.gold }}>{company.name}</div>
-          <div style={{ fontSize:24, fontWeight:800, color:C.text, display:'flex', alignItems:'center', gap:10 }}>
+          <div style={{ fontSize:10, letterSpacing:3, textTransform:'uppercase', color:C.blue, fontWeight:700 }}>{company.name}</div>
+          <div style={{ fontSize:22, fontWeight:800, color:C.text, display:'flex', alignItems:'center', gap:10 }}>
             {editBill ? '✏️ Edit Bill' : '➕ New Bill'} — <span style={{ color:C.blue }}>#{form.billNo}</span>
             {editBill && (
-              <span style={{ fontSize:12, background:'rgba(255,170,68,0.2)', color:C.orange, border:'1px solid rgba(255,170,68,0.4)', borderRadius:6, padding:'2px 8px' }}>
+              <span style={{ fontSize:12, background:'rgba(245,158,11,0.15)', color:C.orange, border:'1px solid rgba(245,158,11,0.35)', borderRadius:6, padding:'2px 8px' }}>
                 Editing Mode
               </span>
             )}
@@ -1027,12 +1420,12 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
           )}
           {uploadStatus === 'done' && (
             <span onClick={()=>driveUrl ? api.openExternal(driveUrl) : null}
-              style={{ fontSize:11, color:C.green, cursor:driveUrl?'pointer':'default', background:'rgba(78,217,122,0.12)', border:'1px solid rgba(78,217,122,0.4)', borderRadius:6, padding:'5px 10px' }}>
+              style={{ fontSize:11, color:C.green, cursor:driveUrl?'pointer':'default', background:'rgba(16,185,129,0.12)', border:'1px solid rgba(16,185,129,0.35)', borderRadius:6, padding:'5px 10px' }}>
               {driveUrl ? '✅ PDF in Drive → Open ↗' : '✅ Bill Saved!'}
             </span>
           )}
           {uploadStatus === 'error' && (
-            <span style={{ fontSize:11, color:C.red, background:'rgba(255,107,107,0.1)', border:'1px solid rgba(255,107,107,0.3)', borderRadius:6, padding:'5px 10px' }}>
+            <span style={{ fontSize:11, color:C.red, background:'rgba(244,63,94,0.12)', border:'1px solid rgba(244,63,94,0.35)', borderRadius:6, padding:'5px 10px' }}>
               ⚠ {errMsg}
             </span>
           )}
@@ -1048,39 +1441,39 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
       </div>
 
       {/* Bill form layout */}
-      <div style={{ background:'linear-gradient(135deg,#0d1b3e 0%,#0f2447 50%,#0d1b3e 100%)', border:'2px solid #1e4d8c', borderRadius:16, boxShadow:'0 10px 50px rgba(13,27,62,0.6)', overflow:'hidden' }}>
+      <div style={{ background:'#111827', border:'1px solid rgba(255,255,255,0.1)', borderRadius:12, boxShadow:'0 8px 32px rgba(0,0,0,0.35)', overflow:'hidden' }}>
         {/* Header section */}
-        <div style={{ display:'flex', borderBottom:'2px solid #1e4d8c', flexWrap:'wrap' }}>
-          <div style={{ flex:'1 1 60%', padding:'16px 20px', borderRight:'2px solid #1e4d8c' }}>
-            <div style={{ fontSize:22, fontWeight:'bold', color:'#7bc8ff', letterSpacing:1, fontFamily:"'Times New Roman',serif", marginBottom:4 }}>{company.name}</div>
-            <div style={{ fontSize:11.5, color:'#a0c4e8' }}>{company.address}</div>
-            <div style={{ fontSize:11.5, color:'#a0c4e8' }}>{company.contact}</div>
-            <div style={{ fontSize:11.5, color:'#7bc8ff', marginTop:3, fontWeight:600 }}>GSTIN : {company.gstin} &nbsp;&nbsp; HSN / SAC : {company.hsn}</div>
+        <div style={{ display:'flex', borderBottom:'1px solid rgba(255,255,255,0.08)', flexWrap:'wrap' }}>
+          <div style={{ flex:'1 1 60%', padding:'18px 24px', borderRight:'1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ fontSize:20, fontWeight:800, color:'#f9fafb', letterSpacing:0.5, marginBottom:4 }}>{company.name}</div>
+            <div style={{ fontSize:11.5, color:'#94a3b8' }}>{company.address}</div>
+            <div style={{ fontSize:11.5, color:'#94a3b8' }}>{company.contact}</div>
+            <div style={{ fontSize:11.5, color:'#38bdf8', marginTop:4, fontWeight:600 }}>GSTIN : {company.gstin} &nbsp;&nbsp; HSN / SAC : {company.hsn}</div>
           </div>
-          <div style={{ flex:'1 1 35%', padding:'14px 18px', minWidth:260 }}>
-            <div style={{ textAlign:'center', background:'#1e4d8c', color:'#fff', fontWeight:'bold', fontSize:11.5, letterSpacing:2, padding:'6px 8px', borderRadius:4, marginBottom:10 }}>GST TAX INVOICE</div>
-            <div style={{ display:'grid', gridTemplateColumns:'auto 1fr', gap:'6px 10px', alignItems:'center' }}>
-              <span style={{ fontSize:11, color:'#a0c4e8', fontWeight:'bold' }}>Bill No. :</span>
+          <div style={{ flex:'1 1 35%', padding:'16px 20px', minWidth:260 }}>
+            <div style={{ textAlign:'center', background:'rgba(56,189,248,0.12)', border:'1px solid rgba(56,189,248,0.3)', color:'#38bdf8', fontWeight:700, fontSize:11, letterSpacing:2, padding:'6px 8px', borderRadius:6, marginBottom:12 }}>GST TAX INVOICE</div>
+            <div style={{ display:'grid', gridTemplateColumns:'auto 1fr', gap:'8px 12px', alignItems:'center' }}>
+              <span style={{ fontSize:11, color:'#94a3b8', fontWeight:600 }}>Bill No. :</span>
               {billNoEdit ? (
-                <input style={{ ...bi, fontWeight:800, color:'#ffc84a', fontSize:16 }} type="number" value={form.billNo}
+                <input style={{ ...bi, fontWeight:800, color:'#38bdf8', fontSize:15 }} type="number" value={form.billNo}
                   onChange={e=>set('billNo',e.target.value)} onBlur={()=>setBillNoEdit(false)} autoFocus />
               ) : (
-                <div style={{ ...bi, fontWeight:800, color:'#ffc84a', fontSize:16, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }} onClick={()=>setBillNoEdit(true)}>
-                  {form.billNo}<span style={{ fontSize:10, color:'rgba(160,196,232,0.6)' }}>✎</span>
+                <div style={{ ...bi, fontWeight:800, color:'#38bdf8', fontSize:15, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }} onClick={()=>setBillNoEdit(true)}>
+                  #{form.billNo}<span style={{ fontSize:10, color:'#94a3b8' }}>✎</span>
                 </div>
               )}
-              <span style={{ fontSize:11, color:'#a0c4e8', fontWeight:'bold' }}>Date :</span>
+              <span style={{ fontSize:11, color:'#94a3b8', fontWeight:600 }}>Date :</span>
               <input style={bi} type="date" value={form.date} onChange={e=>set('date',e.target.value)} />
             </div>
           </div>
         </div>
 
-        <div style={{ textAlign:'center', background:'#1e4d8c', color:'#fff', fontWeight:'bold', letterSpacing:3, fontSize:12, padding:'6px', borderBottom:'2px solid #2563b0' }}>{company.title}</div>
+        <div style={{ textAlign:'center', background:'rgba(255,255,255,0.03)', color:'#cbd5e1', fontWeight:700, letterSpacing:2, fontSize:11.5, padding:'7px', borderBottom:'1px solid rgba(255,255,255,0.08)' }}>{company.title}</div>
 
         {/* Customer select */}
-        <div style={{ padding:'12px 20px', borderBottom:'2px solid #1e4d8c' }}>
+        <div style={{ padding:'14px 24px', borderBottom:'1px solid rgba(255,255,255,0.08)' }}>
           <div style={{ display:'grid', gridTemplateColumns:'36px 1fr 90px 1fr', gap:'0 12px', alignItems:'center' }}>
-            <span style={{ fontSize:12, color:'#a0c4e8', fontWeight:'bold' }}>M/s.</span>
+            <span style={{ fontSize:12, color:'#94a3b8', fontWeight:600 }}>M/s.</span>
             <AutocompleteInput
               value={form.customer}
               options={customers}
@@ -1090,24 +1483,24 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
               style={biL}
               renderItem={(c) => (
                 <div>
-                  <div style={{ fontSize:13, color:'#e8f0ff', fontWeight:600 }}>{c.name}</div>
-                  <div style={{ fontSize:10, color:'rgba(160,196,232,0.7)' }}>GST: {c.gst || 'None'}</div>
+                  <div style={{ fontSize:13, color:'#f9fafb', fontWeight:600 }}>{c.name}</div>
+                  <div style={{ fontSize:10, color:'#94a3b8' }}>GST: {c.gst || 'None'}</div>
                 </div>
               )}
             />
-            <span style={{ fontSize:12, color:'#a0c4e8', fontWeight:'bold', textAlign:'right' }}>Party GST</span>
+            <span style={{ fontSize:12, color:'#94a3b8', fontWeight:600, textAlign:'right' }}>Party GST</span>
             <input style={biL} value={form.partyGst} onChange={e=>set('partyGst',e.target.value)} placeholder="Auto-filled or enter GST" />
           </div>
         </div>
 
         {/* Quick yarn variety chips */}
-        <div style={{ padding:'6px 20px', background:'rgba(0,0,0,0.2)', borderBottom:'1px solid rgba(59,130,246,0.2)', display:'flex', gap:6, overflowX:'auto', alignItems:'center' }}>
-          <span style={{ fontSize:10, color:'#7bc8ff', fontWeight:700, textTransform:'uppercase', letterSpacing:1, whiteSpace:'nowrap' }}>Common Counts:</span>
+        <div style={{ padding:'8px 24px', background:'rgba(0,0,0,0.2)', borderBottom:'1px solid rgba(255,255,255,0.08)', display:'flex', gap:8, overflowX:'auto', alignItems:'center' }}>
+          <span style={{ fontSize:10, color:'#38bdf8', fontWeight:700, textTransform:'uppercase', letterSpacing:1, whiteSpace:'nowrap' }}>Common Counts:</span>
           {COMMON_COUNTS.slice(0, 7).map(c => (
             <span key={c} onClick={()=>{
               const lastIdx = form.items.length - 1;
               setItem(lastIdx, 'count', c);
-            }} style={{ fontSize:10, background:'rgba(59,130,246,0.2)', border:'1px solid rgba(59,130,246,0.4)', borderRadius:4, padding:'2px 8px', color:'#a0c4e8', cursor:'pointer', whiteSpace:'nowrap' }}>
+            }} style={{ fontSize:10, background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.12)', borderRadius:4, padding:'3px 10px', color:'#cbd5e1', cursor:'pointer', whiteSpace:'nowrap', transition:'all 0.15s' }}>
               {c}
             </span>
           ))}
@@ -1117,9 +1510,9 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
         <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
             <thead>
-              <tr style={{ background:'#1e4d8c' }}>
+              <tr style={{ background:'#1e293b' }}>
                 {[['Sl','4%'],['Del. No.','10%'],['PO.No.','9%'],['Variety','22%'],['Count','9%'],['Kattu','7%'],['Kazhi','7%'],['Rate','9%'],['Amount','12%'],['','7%']].map(([h,w]) => (
-                  <th key={h} style={{ padding:'8px 4px', color:'#e8f0ff', textAlign:'center', fontSize:10, letterSpacing:1.5, fontWeight:'bold', border:'1px solid rgba(255,255,255,0.15)', width:w }}>{h}</th>
+                  <th key={h} style={{ padding:'10px 6px', color:'#e2e8f0', textAlign:'center', fontSize:10, letterSpacing:1, fontWeight:700, border:'1px solid rgba(255,255,255,0.08)', width:w, textTransform:'uppercase' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -1129,49 +1522,49 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
                 const effPo        = getEffective(form.items, idx, 'poNo');
                 const matchedCount = countMap.find(c => c.count.toLowerCase() === (it.count||'').toLowerCase());
                 return (
-                  <tr key={it.id} style={{ background:idx%2===0?'rgba(255,255,255,0.03)':'rgba(30,77,140,0.2)' }}>
-                    <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'4px 3px', textAlign:'center', color:'#a0c4e8', fontSize:11 }}>{idx+1}</td>
-                    <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px', position:'relative' }}>
-                      <input style={{ ...bi, padding:'5px 4px' }} value={it.delNo} onChange={e=>setItem(idx,'delNo',e.target.value)} />
-                      {!it.delNo && idx>0 && effDel && <div style={{ position:'absolute', top:'50%', left:8, transform:'translateY(-50%)', fontSize:11, color:'rgba(160,196,232,0.4)', pointerEvents:'none', fontStyle:'italic' }}>{effDel}</div>}
+                  <tr key={it.id} style={{ background:idx%2===0?'#111827':'rgba(255,255,255,0.02)' }}>
+                    <td style={{ border:'1px solid rgba(255,255,255,0.06)', padding:'5px 4px', textAlign:'center', color:'#94a3b8', fontSize:11 }}>{idx+1}</td>
+                    <td style={{ border:'1px solid rgba(255,255,255,0.06)', padding:'4px', position:'relative' }}>
+                      <input style={{ ...bi, padding:'6px 6px' }} value={it.delNo || ''} onChange={e=>setItem(idx,'delNo',e.target.value)} />
+                      {!it.delNo && idx>0 && effDel && <div style={{ position:'absolute', top:'50%', left:8, transform:'translateY(-50%)', fontSize:11, color:'rgba(148,163,184,0.5)', pointerEvents:'none', fontStyle:'italic' }}>{effDel}</div>}
                     </td>
-                    <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px', position:'relative' }}>
-                      <input style={{ ...bi, padding:'5px 4px' }} value={it.poNo} onChange={e=>setItem(idx,'poNo',e.target.value)} />
-                      {!it.poNo && idx>0 && effPo && <div style={{ position:'absolute', top:'50%', left:8, transform:'translateY(-50%)', fontSize:11, color:'rgba(160,196,232,0.4)', pointerEvents:'none', fontStyle:'italic' }}>{effPo}</div>}
+                    <td style={{ border:'1px solid rgba(255,255,255,0.06)', padding:'4px', position:'relative' }}>
+                      <input style={{ ...bi, padding:'6px 6px' }} value={it.poNo || ''} onChange={e=>setItem(idx,'poNo',e.target.value)} />
+                      {!it.poNo && idx>0 && effPo && <div style={{ position:'absolute', top:'50%', left:8, transform:'translateY(-50%)', fontSize:11, color:'rgba(148,163,184,0.5)', pointerEvents:'none', fontStyle:'italic' }}>{effPo}</div>}
                     </td>
-                    <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px' }}>
+                    <td style={{ border:'1px solid rgba(255,255,255,0.06)', padding:'4px' }}>
                       <AutocompleteInput
-                        value={it.variety}
+                        value={it.variety || ''}
                         options={COMMON_VARIETIES}
                         onChange={v=>setItem(idx,'variety',v)}
                         onSelect={v=>setItem(idx,'variety',v)}
                         placeholder="Cotton, Viscose..."
-                        style={{ ...bi, textAlign:'left', padding:'5px 6px' }}
+                        style={{ ...bi, textAlign:'left', padding:'6px 8px' }}
                       />
                     </td>
-                    <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px' }}>
-                      <input style={{ ...bi, padding:'5px 4px', borderColor:matchedCount?'rgba(78,217,122,0.6)':'rgba(59,130,246,0.45)' }}
-                        value={it.count} onChange={e=>setItem(idx,'count',e.target.value)} onBlur={()=>handleCountBlur(idx)} placeholder="17s" />
+                    <td style={{ border:'1px solid rgba(255,255,255,0.06)', padding:'4px' }}>
+                      <input style={{ ...bi, padding:'6px 6px', borderColor:matchedCount?'rgba(16,185,129,0.5)':'rgba(255,255,255,0.1)' }}
+                        value={it.count || ''} onChange={e=>setItem(idx,'count',e.target.value)} onBlur={()=>handleCountBlur(idx)} placeholder="17s" />
                       {matchedCount
-                        ? <div style={{ fontSize:9, color:'rgba(78,217,122,0.9)', textAlign:'center', marginTop:1 }}>={matchedCount.kazhi} kzh/ktt</div>
-                        : it.count && <div style={{ fontSize:9, color:'rgba(255,168,30,0.8)', textAlign:'center', marginTop:1 }}>no map</div>}
+                        ? <div style={{ fontSize:9, color:'#34d399', textAlign:'center', marginTop:1 }}>={matchedCount.kazhi} kzh/ktt</div>
+                        : it.count && <div style={{ fontSize:9, color:'#f59e0b', textAlign:'center', marginTop:1 }}>no map</div>}
                     </td>
-                    <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px' }}>
-                      <input style={{ ...bi, padding:'5px 4px' }} value={it.kattu} onChange={e=>setItem(idx,'kattu',e.target.value)} />
+                    <td style={{ border:'1px solid rgba(255,255,255,0.06)', padding:'4px' }}>
+                      <input style={{ ...bi, padding:'6px 6px' }} value={it.kattu || ''} onChange={e=>setItem(idx,'kattu',e.target.value)} />
                     </td>
-                    <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px' }}>
-                      <input style={{ ...bi, padding:'5px 4px' }} value={it.kazhi} onChange={e=>setItem(idx,'kazhi',e.target.value)} />
+                    <td style={{ border:'1px solid rgba(255,255,255,0.06)', padding:'4px' }}>
+                      <input style={{ ...bi, padding:'6px 6px' }} value={it.kazhi || ''} onChange={e=>setItem(idx,'kazhi',e.target.value)} />
                     </td>
-                    <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px' }}>
-                      <input style={{ ...bi, padding:'5px 6px' }} value={it.rate} onChange={e=>setItem(idx,'rate',e.target.value)} />
+                    <td style={{ border:'1px solid rgba(255,255,255,0.06)', padding:'6px 8px' }}>
+                      <input style={{ ...bi, padding:'6px 8px' }} value={it.rate || ''} onChange={e=>setItem(idx,'rate',e.target.value)} />
                     </td>
-                    <td style={{ border:'1px solid rgba(59,130,246,0.2)', padding:'3px' }}>
-                      <input style={{ ...bi, fontWeight:700, color:'#ffc84a', textAlign:'right', padding:'5px 6px' }} value={it.amount} onChange={e=>setItem(idx,'amount',e.target.value)} />
+                    <td style={{ border:'1px solid rgba(255,255,255,0.06)', padding:'4px' }}>
+                      <input style={{ ...bi, fontWeight:700, color:'#38bdf8', textAlign:'right', padding:'6px 8px' }} value={it.amount || ''} onChange={e=>setItem(idx,'amount',e.target.value)} />
                     </td>
-                    <td style={{ border:'1px solid rgba(59,130,246,0.2)', textAlign:'center' }}>
+                    <td style={{ border:'1px solid rgba(255,255,255,0.06)', textAlign:'center' }}>
                       <div style={{ display:'flex', justifyContent:'center', gap:4 }}>
-                        <button style={{ background:'none', border:'none', color:'#7bc8ff', cursor:'pointer', fontSize:12, padding:'0 3px' }} onClick={()=>cloneRow(idx)} title="Clone row">📋</button>
-                        <button style={{ background:'none', border:'none', color:'rgba(255,107,107,0.7)', cursor:'pointer', fontSize:13, padding:'0 3px' }} onClick={()=>removeRow(idx)} title="Remove row">✕</button>
+                        <button style={{ background:'none', border:'none', color:'#38bdf8', cursor:'pointer', fontSize:12, padding:'0 3px' }} onClick={()=>cloneRow(idx)} title="Clone row">📋</button>
+                        <button style={{ background:'none', border:'none', color:'#f43f5e', cursor:'pointer', fontSize:13, padding:'0 3px' }} onClick={()=>removeRow(idx)} title="Remove row">✕</button>
                       </div>
                     </td>
                   </tr>
@@ -1180,38 +1573,38 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
             </tbody>
           </table>
         </div>
-        <div style={{ padding:'10px 18px', borderTop:'1px solid rgba(59,130,246,0.2)', display:'flex', gap:10 }}>
-          <button style={{ background:'rgba(59,130,246,0.2)', border:'1px solid rgba(59,130,246,0.4)', borderRadius:6, padding:'6px 16px', fontSize:11, color:'#7bc8ff', cursor:'pointer', fontFamily:'inherit', fontWeight:700 }} onClick={addRow}>+ Add Row</button>
+        <div style={{ padding:'12px 24px', borderTop:'1px solid rgba(255,255,255,0.08)', display:'flex', gap:10 }}>
+          <button style={{ background:'rgba(56,189,248,0.1)', border:'1px solid rgba(56,189,248,0.3)', borderRadius:6, padding:'6px 16px', fontSize:11, color:'#38bdf8', cursor:'pointer', fontFamily:'inherit', fontWeight:600 }} onClick={addRow}>+ Add Row</button>
         </div>
 
         {/* Totals & Bank details */}
-        <div style={{ display:'flex', borderTop:'2px solid #1e4d8c', flexWrap:'wrap' }}>
-          <div style={{ flex:'1 1 55%', padding:'14px 20px', borderRight:'2px solid #1e4d8c' }}>
-            <div style={{ fontSize:12.5, color:'#e8f0ff', marginBottom:12 }}>
-              <span style={{ color:'#a0c4e8', fontWeight:'bold' }}>Rupees </span>
-              <span style={{ color:'#ffc84a', fontWeight:700 }}>{numWords(net)}</span>
-              <span style={{ color:'#a0c4e8' }}> Only</span>
+        <div style={{ display:'flex', borderTop:'1px solid rgba(255,255,255,0.08)', flexWrap:'wrap' }}>
+          <div style={{ flex:'1 1 55%', padding:'16px 24px', borderRight:'1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ fontSize:12.5, color:'#f9fafb', marginBottom:12 }}>
+              <span style={{ color:'#94a3b8', fontWeight:600 }}>Rupees </span>
+              <span style={{ color:'#38bdf8', fontWeight:700 }}>{numWords(net)}</span>
+              <span style={{ color:'#94a3b8' }}> Only</span>
             </div>
-            <div style={{ fontSize:11.5, color:'#a0c4e8', lineHeight:1.7 }}>
-              <span style={{ color:'#7bc8ff', fontWeight:'bold' }}>Bank Details :</span><br/>
-              <span style={{ color:'#fff', fontWeight:600 }}>{company.bankName}</span><br/>
+            <div style={{ fontSize:11.5, color:'#94a3b8', lineHeight:1.7 }}>
+              <span style={{ color:'#38bdf8', fontWeight:600 }}>Bank Details :</span><br/>
+              <span style={{ color:'#f9fafb', fontWeight:600 }}>{company.bankName}</span><br/>
               A/c No. : {company.accountNo}<br/>IFSC : {company.ifsc}
             </div>
           </div>
           <div style={{ flex:'1 1 40%', minWidth:260 }}>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}><tbody>
               {[['TOTAL',fmt(sub),false],['CGST  2.50 %',fmt(cgst),false],['SGST  2.50 %',fmt(sgst),false],['ROUNDED OFF',fmt(rounded),false],['NET AMOUNT',fmt(net),true]].map(([l,v,bold]) => (
-                <tr key={l} style={{ background:bold?'#1e4d8c':'transparent' }}>
-                  <td style={{ border:'1px solid rgba(59,130,246,0.25)', padding:'8px 14px', color:bold?'#fff':'#a0c4e8', fontWeight:bold?'bold':'normal', fontSize:bold?13:12 }}>{l}</td>
-                  <td style={{ border:'1px solid rgba(59,130,246,0.25)', padding:'8px 14px', textAlign:'right', color:bold?'#ffc84a':'#e8f0ff', fontWeight:bold?'bold':'normal', fontSize:bold?15:12 }}>{v}</td>
+                <tr key={l} style={{ background:bold?'#2563eb':'transparent' }}>
+                  <td style={{ border:'1px solid rgba(255,255,255,0.08)', padding:'8px 16px', color:bold?'#fff':'#94a3b8', fontWeight:bold?700:500, fontSize:bold?13:12 }}>{l}</td>
+                  <td style={{ border:'1px solid rgba(255,255,255,0.08)', padding:'8px 16px', textAlign:'right', color:bold?'#ffffff':'#f9fafb', fontWeight:bold?800:500, fontSize:bold?15:12, fontVariantNumeric:'tabular-nums' }}>{v}</td>
                 </tr>
               ))}
-              <tr><td colSpan={2} style={{ border:'1px solid rgba(59,130,246,0.25)', padding:'6px 14px', textAlign:'right', fontSize:10.5, color:'#7bc8ff', fontWeight:'bold', fontStyle:'italic' }}>For {company.name}</td></tr>
+              <tr><td colSpan={2} style={{ border:'1px solid rgba(255,255,255,0.08)', padding:'8px 16px', textAlign:'right', fontSize:11, color:'#94a3b8', fontWeight:600, fontStyle:'italic' }}>For {company.name}</td></tr>
             </tbody></table>
           </div>
         </div>
-        <div style={{ padding:'8px 20px', borderTop:'1px solid #1e4d8c', fontSize:10.5, color:'#6a8ab0' }}>
-          <b style={{ color:'#7bc8ff' }}>Declaration :</b> 1. All disputes under this sale subject to {company.jurisdiction} jurisdiction
+        <div style={{ padding:'10px 24px', borderTop:'1px solid rgba(255,255,255,0.08)', fontSize:11, color:'#64748b' }}>
+          <b style={{ color:'#94a3b8' }}>Declaration :</b> 1. All disputes under this sale subject to {company.jurisdiction} jurisdiction
         </div>
       </div>
     </div>
@@ -1219,7 +1612,7 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
 }
 
 // ── BILLS LIST ────────────────────────────────────────────────────────────────
-function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, company }) {
+function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, company, onDeleteBill }) {
   const [filter, setFilter]               = useState('all');
   const [dateFilter, setDateFilter]       = useState('all');
   const [selectedMonth, setSelectedMonth] = useState('all');
@@ -1245,10 +1638,14 @@ function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, compan
   };
 
   const del = async (id) => {
-    if (!confirm('Are you sure you want to delete this bill?')) return;
-    const u = bills.filter(b => b.id !== id);
-    setBills(u);
-    await api.storeSet('sgc-bills', u);
+    if (onDeleteBill) {
+      await onDeleteBill(id);
+    } else {
+      if (!confirm('Are you sure you want to delete this bill?')) return;
+      const u = bills.filter(b => b.id !== id);
+      setBills(u);
+      await api.storeSet('sgc-bills', u);
+    }
   };
 
   const resync = async (bill) => {
@@ -1322,9 +1719,8 @@ function BillsList({ bills, setBills, onEditBill, onCloneBill, customers, compan
 
   // Filtering
   const now = new Date();
-  const currentMonth = now.toISOString().slice(0, 7);
-  const lastMonthObj = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const lastMonth = lastMonthObj.toISOString().slice(0, 7);
+  const currentMonth = getMonthKey(now);
+  const lastMonth = getRelativeMonthKey(-1, now);
 
   const list = bills.filter(b => {
     const fin = getBillFinancials(b);
@@ -1749,14 +2145,10 @@ function AnalyticsPage({ bills, customers }) {
 function MonthlyGSTRadar({ bills, company }) {
   const [copied, setCopied] = useState(false);
 
-  // Determine current and previous month keys (YYYY-MM)
+  // Deterministic Local Calendar Month Keys (IST Safe - 0% Timezone Drift)
   const now = new Date();
-  const currentMonthKey = now.toISOString().slice(0, 7);
-  const prevMonthObj = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevMonthKey = prevMonthObj.toISOString().slice(0, 7);
-
-  // Default to previous month if today is <= 20th of the month, else current month
-  const [selectedMonth, setSelectedMonth] = useState(prevMonthKey);
+  const currentMonthKey = getMonthKey(now);
+  const prevMonthKey    = getRelativeMonthKey(-1, now);
 
   // Group all available months with GST data
   const monthData = useMemo(() => {
@@ -1765,13 +2157,10 @@ function MonthlyGSTRadar({ bills, company }) {
       const ym = (b.date || '').slice(0, 7);
       if (!ym) return;
       if (!map[ym]) {
-        const [y, m] = ym.split('-');
-        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-        const mIdx = parseInt(m, 10) - 1;
-        const label = `${monthNames[mIdx] || m} ${y}`;
         map[ym] = {
           key: ym,
-          label,
+          label: getMonthLabel(ym),
+          shortLabel: getMonthShortLabel(ym),
           subtotal: 0,
           cgst: 0,
           sgst: 0,
@@ -1796,6 +2185,27 @@ function MonthlyGSTRadar({ bills, company }) {
     return map;
   }, [bills]);
 
+  const getSafeStats = (key) => {
+    return monthData[key] || {
+      key,
+      label: getMonthLabel(key),
+      shortLabel: getMonthShortLabel(key),
+      subtotal: 0,
+      cgst: 0,
+      sgst: 0,
+      totalGst: 0,
+      gross: 0,
+      count: 0,
+      billNos: []
+    };
+  };
+
+  const thisStats = getSafeStats(currentMonthKey);
+  const prevStats = getSafeStats(prevMonthKey);
+
+  // Default to previous month if today is <= 20th of the month, else current month
+  const [selectedMonth, setSelectedMonth] = useState(prevMonthKey);
+
   const availableMonths = useMemo(() => {
     const keys = Object.keys(monthData);
     if (!keys.includes(prevMonthKey)) keys.push(prevMonthKey);
@@ -1804,17 +2214,7 @@ function MonthlyGSTRadar({ bills, company }) {
   }, [monthData, prevMonthKey, currentMonthKey]);
 
   // Selected month stats
-  const cur = monthData[selectedMonth] || {
-    key: selectedMonth,
-    label: selectedMonth,
-    subtotal: 0,
-    cgst: 0,
-    sgst: 0,
-    totalGst: 0,
-    gross: 0,
-    count: 0,
-    billNos: []
-  };
+  const cur = getSafeStats(selectedMonth);
 
   const billRange = cur.billNos.length > 0
     ? `#${Math.min(...cur.billNos)} - #${Math.max(...cur.billNos)}`
@@ -1874,33 +2274,163 @@ Kindly file GSTR-3B / GSTR-1.`;
       {/* Decorative background glow */}
       <div style={{ position:'absolute', top:-40, right:-40, width:140, height:140, background:'rgba(59,130,246,0.15)', borderRadius:'50%', filter:'blur(40px)', pointerEvents:'none' }} />
 
-      {/* Header with period switcher */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:12, marginBottom:16 }}>
+      {/* Header with status badge */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:12, marginBottom:18 }}>
         <div>
           <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-            <span style={{ fontSize:18 }}>🏛️</span>
-            <span style={{ fontSize:16, fontWeight:800, color:'#fff', letterSpacing:0.5 }}>
-              Monthly GST Tax Filing Radar
+            <span style={{ fontSize:20 }}>🏛️</span>
+            <span style={{ fontSize:18, fontWeight:800, color:'#fff', letterSpacing:0.5 }}>
+              Monthly GST Tax Radar
             </span>
-            {isPrev && (
-              <span style={{ fontSize:10, background:'rgba(255,170,68,0.2)', color:C.orange, border:'1px solid rgba(255,170,68,0.4)', borderRadius:6, padding:'2px 8px', fontWeight:700 }}>
-                ⚡ Previous Month Filing
-              </span>
-            )}
-            {now.getDate() <= 11 && isPrev && (
-              <span style={{ fontSize:10, background:'rgba(239,68,68,0.2)', color:'#f87171', border:'1px solid rgba(239,68,68,0.4)', borderRadius:6, padding:'2px 8px', fontWeight:700 }}>
-                🔔 Due for GSTR-1 & 3B
-              </span>
-            )}
+            <span style={{ fontSize:10.5, background:'rgba(16,185,129,0.2)', color:'#34d399', border:'1px solid rgba(16,185,129,0.4)', borderRadius:6, padding:'2px 8px', fontWeight:700 }}>
+              ● 100% Dynamic GST Engine
+            </span>
           </div>
           <div style={{ fontSize:11.5, color:'#94a3b8', marginTop:3 }}>
-            Auto-calculates CGST, SGST & Total Tax for before month and current month ready for your CA / Auditor.
+            Auto-calculates only GST 5% amount for <b>This Month</b> &amp; <b>Previous Month</b> ready for your CA / Auditor.
+          </div>
+        </div>
+      </div>
+
+      {/* ── DUAL-MONTH GST SHOWCASE (BOTH PREVIOUS & THIS MONTH VISIBLE AT ONCE) ── */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(290px, 1fr))', gap:14, marginBottom:20 }}>
+        {/* Previous Month Card */}
+        <div
+          onClick={() => setSelectedMonth(prevMonthKey)}
+          style={{
+            background: selectedMonth === prevMonthKey
+              ? 'linear-gradient(135deg, rgba(245,158,11,0.22) 0%, rgba(15,23,42,0.9) 100%)'
+              : 'rgba(15,23,42,0.65)',
+            border: selectedMonth === prevMonthKey
+              ? '2px solid #f59e0b'
+              : '1px solid rgba(245,158,11,0.3)',
+            borderRadius: 14,
+            padding: '16px 18px',
+            cursor: 'pointer',
+            position: 'relative',
+            boxShadow: selectedMonth === prevMonthKey ? '0 0 25px rgba(245,158,11,0.2)' : 'none',
+            transition: 'all 0.2s ease'
+          }}
+        >
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+              <span style={{ fontSize:15 }}>⚡</span>
+              <span style={{ fontSize:11, fontWeight:800, color:'#fbbf24', letterSpacing:1, textTransform:'uppercase' }}>
+                Previous Month ({prevStats.label})
+              </span>
+            </div>
+            <span style={{ fontSize:10, background: selectedMonth === prevMonthKey ? 'rgba(245,158,11,0.35)' : 'rgba(255,255,255,0.06)', color: selectedMonth === prevMonthKey ? '#fbbf24' : '#94a3b8', border:'1px solid rgba(245,158,11,0.3)', borderRadius:6, padding:'2px 8px', fontWeight:700 }}>
+              {selectedMonth === prevMonthKey ? '✓ Active View' : 'Click to View'}
+            </span>
+          </div>
+
+          <div style={{ fontSize:10.5, color:'#94a3b8', letterSpacing:0.5, textTransform:'uppercase' }}>
+            TOTAL GST AMOUNT (5.00% ONLY)
+          </div>
+          <div style={{ fontSize:26, fontWeight:900, color:'#fbbf24', letterSpacing:0.5, margin:'4px 0 6px 0' }}>
+            {fmtINR(prevStats.totalGst)}
+          </div>
+
+          <div style={{ display:'flex', gap:10, fontSize:11, color:'#cbd5e1', borderTop:'1px solid rgba(255,255,255,0.06)', paddingTop:8, flexWrap:'wrap' }}>
+            <span>CGST: <strong style={{ color:'#60a5fa' }}>{fmtINR(prevStats.cgst)}</strong></span>
+            <span>•</span>
+            <span>SGST: <strong style={{ color:'#38bdf8' }}>{fmtINR(prevStats.sgst)}</strong></span>
+            <span>•</span>
+            <span>Turnover: <strong style={{ color:C.gold }}>{fmtINR(prevStats.subtotal)}</strong></span>
+          </div>
+          <div style={{ fontSize:10.5, color:'#94a3b8', marginTop:6 }}>
+            🧾 {prevStats.count} Bills in {prevStats.shortLabel} {prevStats.count > 0 && `(#${Math.min(...prevStats.billNos)} - #${Math.max(...prevStats.billNos)})`}
           </div>
         </div>
 
-        {/* Month Dropdown / Selector */}
+        {/* This Month Card */}
+        <div
+          onClick={() => setSelectedMonth(currentMonthKey)}
+          style={{
+            background: selectedMonth === currentMonthKey
+              ? 'linear-gradient(135deg, rgba(56,189,248,0.22) 0%, rgba(15,23,42,0.9) 100%)'
+              : 'rgba(15,23,42,0.65)',
+            border: selectedMonth === currentMonthKey
+              ? '2px solid #38bdf8'
+              : '1px solid rgba(56,189,248,0.3)',
+            borderRadius: 14,
+            padding: '16px 18px',
+            cursor: 'pointer',
+            position: 'relative',
+            boxShadow: selectedMonth === currentMonthKey ? '0 0 25px rgba(56,189,248,0.2)' : 'none',
+            transition: 'all 0.2s ease'
+          }}
+        >
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+              <span style={{ fontSize:15 }}>📅</span>
+              <span style={{ fontSize:11, fontWeight:800, color:'#38bdf8', letterSpacing:1, textTransform:'uppercase' }}>
+                This Month ({thisStats.label})
+              </span>
+            </div>
+            <span style={{ fontSize:10, background: selectedMonth === currentMonthKey ? 'rgba(56,189,248,0.35)' : 'rgba(255,255,255,0.06)', color: selectedMonth === currentMonthKey ? '#38bdf8' : '#94a3b8', border:'1px solid rgba(56,189,248,0.3)', borderRadius:6, padding:'2px 8px', fontWeight:700 }}>
+              {selectedMonth === currentMonthKey ? '✓ Active View' : 'Click to View'}
+            </span>
+          </div>
+
+          <div style={{ fontSize:10.5, color:'#94a3b8', letterSpacing:0.5, textTransform:'uppercase' }}>
+            TOTAL GST AMOUNT (5.00% ONLY)
+          </div>
+          <div style={{ fontSize:26, fontWeight:900, color:'#38bdf8', letterSpacing:0.5, margin:'4px 0 6px 0' }}>
+            {fmtINR(thisStats.totalGst)}
+          </div>
+
+          <div style={{ display:'flex', gap:10, fontSize:11, color:'#cbd5e1', borderTop:'1px solid rgba(255,255,255,0.06)', paddingTop:8, flexWrap:'wrap' }}>
+            <span>CGST: <strong style={{ color:'#60a5fa' }}>{fmtINR(thisStats.cgst)}</strong></span>
+            <span>•</span>
+            <span>SGST: <strong style={{ color:'#38bdf8' }}>{fmtINR(thisStats.sgst)}</strong></span>
+            <span>•</span>
+            <span>Turnover: <strong style={{ color:C.gold }}>{fmtINR(thisStats.subtotal)}</strong></span>
+          </div>
+          <div style={{ fontSize:10.5, color:'#94a3b8', marginTop:6 }}>
+            🧾 {thisStats.count} Bills in {thisStats.shortLabel} {thisStats.count > 0 && `(#${Math.min(...thisStats.billNos)} - #${Math.max(...thisStats.billNos)})`}
+          </div>
+        </div>
+      </div>
+
+      {/* Month Filter Pills & Selector */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10, marginBottom:16 }}>
+        <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+          <span style={{ fontSize:11, color:C.textMuted, fontWeight:600 }}>Active Breakdown:</span>
+          <button
+            onClick={() => setSelectedMonth(prevMonthKey)}
+            style={{
+              padding: '6px 14px',
+              borderRadius: 8,
+              fontSize: 11.5,
+              fontWeight: 700,
+              cursor: 'pointer',
+              border: selectedMonth === prevMonthKey ? '1px solid #f59e0b' : '1px solid rgba(255,255,255,0.1)',
+              background: selectedMonth === prevMonthKey ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.04)',
+              color: selectedMonth === prevMonthKey ? '#fbbf24' : '#94a3b8'
+            }}
+          >
+            ⚡ {prevStats.label} (Previous Month)
+          </button>
+          <button
+            onClick={() => setSelectedMonth(currentMonthKey)}
+            style={{
+              padding: '6px 14px',
+              borderRadius: 8,
+              fontSize: 11.5,
+              fontWeight: 700,
+              cursor: 'pointer',
+              border: selectedMonth === currentMonthKey ? '1px solid #38bdf8' : '1px solid rgba(255,255,255,0.1)',
+              background: selectedMonth === currentMonthKey ? 'rgba(56,189,248,0.2)' : 'rgba(255,255,255,0.04)',
+              color: selectedMonth === currentMonthKey ? '#38bdf8' : '#94a3b8'
+            }}
+          >
+            📅 {thisStats.label} (This Month)
+          </button>
+        </div>
+
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-          <span style={{ fontSize:11, color:C.textMuted }}>Period:</span>
+          <span style={{ fontSize:11, color:C.textMuted }}>Other Months:</span>
           <select
             value={selectedMonth}
             onChange={e => setSelectedMonth(e.target.value)}
@@ -1917,10 +2447,7 @@ Kindly file GSTR-3B / GSTR-1.`;
             }}
           >
             {availableMonths.map(ym => {
-              const [y, m] = ym.split('-');
-              const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-              const mIdx = parseInt(m, 10) - 1;
-              const lbl = `${monthNames[mIdx] || m} ${y}`;
+              const lbl = getMonthLabel(ym);
               const tag = ym === prevMonthKey ? ' (Previous Month)' : ym === currentMonthKey ? ' (Current Month)' : '';
               return (
                 <option key={ym} value={ym} style={{ background: '#0f172a', color: '#fff' }}>
@@ -1976,6 +2503,8 @@ Kindly file GSTR-3B / GSTR-1.`;
           <div style={{ fontSize:20, fontWeight:800, color:'#f1f5f9', marginTop:4 }}>{fmtINR(cur.gross)}</div>
           <div style={{ fontSize:10, color:C.textMuted, marginTop:2 }}>{cur.count} Invoices ({billRange})</div>
         </div>
+      </div>
+
       {/* Bill-by-Bill GST List for Selected Month */}
       <div style={{ marginTop: 18, marginBottom: 18, background: 'rgba(15,23,42,0.75)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)', overflow: 'hidden' }}>
         <div style={{ padding: '12px 16px', background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -2081,45 +2610,215 @@ Kindly file GSTR-3B / GSTR-1.`;
   );
 }
 
+// ── ANIMATED COUNTER ──────────────────────────────────────────────────────────
+function AnimatedCounter({ value, duration = 800, isCurrency = false, prefix = '', suffix = '' }) {
+  const [displayVal, setDisplayVal] = useState(0);
+  const targetVal = typeof value === 'number' ? value : (parseFloat(String(value).replace(/[^0-9.-]+/g, '')) || 0);
+
+  useEffect(() => {
+    let startTimestamp = null;
+    const startVal = displayVal;
+    let animId;
+
+    const step = (timestamp) => {
+      if (!startTimestamp) startTimestamp = timestamp;
+      const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+      // easeOutCubic
+      const ease = 1 - Math.pow(1 - progress, 3);
+      const current = Math.round(startVal + (targetVal - startVal) * ease);
+      setDisplayVal(current);
+
+      if (progress < 1) {
+        animId = requestAnimationFrame(step);
+      }
+    };
+
+    animId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(animId);
+  }, [targetVal, duration]);
+
+  if (isCurrency) {
+    return <span>{fmtINR(displayVal)}</span>;
+  }
+  return <span>{prefix}{displayVal.toLocaleString('en-IN')}{suffix}</span>;
+}
+
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function Dashboard({ bills, onNewBill, onShowLedger, customers, company }) {
+function Dashboard({ bills, onNewBill, onShowLedger, customers, company, onDeleteBill, onShowMonthEnd }) {
   const totalAmt   = bills.reduce((s,b)=>s+Number(b.netAmount||0),0);
   const totalPaid  = bills.reduce((s,b)=>s+getBillFinancials(b).totalPaid,0);
   const pendingAmt = Math.max(0, totalAmt - totalPaid);
   const synced     = bills.filter(b=>b.driveUrl).length;
+  const pendingCount = bills.filter(b=>getBillFinancials(b).computedStatus!=='paid').length;
+  const collectionRate = totalAmt > 0 ? Math.round((totalPaid / totalAmt) * 100) : 0;
+  const pendingRate = totalAmt > 0 ? Math.round((pendingAmt / totalAmt) * 100) : 0;
+
+  const now = new Date();
+  const currentMonthKey = getMonthKey(now);
+  const prevMonthKey    = getRelativeMonthKey(-1, now);
+
+  const thisMonthBills = bills.filter(b => (b.date || '').startsWith(currentMonthKey));
+  const prevMonthBills = bills.filter(b => (b.date || '').startsWith(prevMonthKey));
+
+  const thisMonthGST = thisMonthBills.reduce((s, b) => s + (Number(b.cgst || 0) + Number(b.sgst || 0)), 0);
+  const prevMonthGST = prevMonthBills.reduce((s, b) => s + (Number(b.cgst || 0) + Number(b.sgst || 0)), 0);
 
   const stats = [
-    [fmtINR(totalAmt),   C.gold,  'Total Billed'],
-    [fmtINR(pendingAmt), C.red,   'Pending Dues'],
-    [fmtINR(totalPaid),  C.green, 'Collected Cash'],
-    [`${synced}/${bills.length}`, C.drive, 'PDF in Drive'],
-    [`${bills.length}`,  C.blue,  'Total Invoices'],
-    [`${bills.filter(b=>getBillFinancials(b).computedStatus!=='paid').length}`, C.orange, 'Pending Bills'],
+    { label: 'Total Billed', value: totalAmt, isCurr: true, color: C.gold, icon: '💰', sub: `${bills.length} Invoices` },
+    { label: 'Pending Dues', value: pendingAmt, isCurr: true, color: C.red, icon: '⏳', sub: `${pendingCount} Bills Unpaid` },
+    { label: 'Collected Cash', value: totalPaid, isCurr: true, color: C.green, icon: '💳', sub: `${collectionRate}% Recovery` },
+    { label: 'This Month GST (5%)', value: thisMonthGST, isCurr: true, color: '#38bdf8', icon: '📅', sub: `${thisMonthBills.length} Bills (${getMonthShortLabel(currentMonthKey)})` },
+    { label: 'Prev Month GST (5%)', value: prevMonthGST, isCurr: true, color: '#fbbf24', icon: '⚡', sub: `${prevMonthBills.length} Bills (${getMonthShortLabel(prevMonthKey)})` },
+    { label: 'PDF in Drive', isRatio: true, num: synced, den: bills.length, color: C.drive, icon: '☁️', sub: 'Cloud Vault' },
   ];
 
   return (
-    <div className="fade-in">
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24, flexWrap:'wrap', gap:12 }}>
+    <div className="fade-in" style={{ position: 'relative' }}>
+      {/* Ambient background glow orb */}
+      <div style={{
+        position: 'absolute',
+        top: -40,
+        right: 40,
+        width: 320,
+        height: 320,
+        background: 'radial-gradient(circle, rgba(255,200,74,0.06) 0%, rgba(123,200,255,0.03) 50%, transparent 70%)',
+        pointerEvents: 'none',
+        borderRadius: '50%',
+        filter: 'blur(40px)',
+        animation: 'floatAmbient 8s ease-in-out infinite',
+        zIndex: 0
+      }} />
+
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24, flexWrap:'wrap', gap:12, position:'relative', zIndex:1 }}>
         <div>
-          <div style={{ fontSize:10, letterSpacing:4, textTransform:'uppercase', color:C.gold }}>{company.name}</div>
-          <div style={{ fontSize:28, fontWeight:800, color:C.text }}>Business Overview</div>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4 }}>
+            <div style={{ fontSize:10, letterSpacing:4, textTransform:'uppercase', color:C.gold, fontWeight:700 }}>{company.name}</div>
+            <div className="radar-beacon">
+              <span className="radar-dot"></span>
+              LIVE RADAR
+            </div>
+          </div>
+          <div style={{ fontSize:28, fontWeight:800, color:C.text, display:'flex', alignItems:'center', gap:12 }}>
+            <span>Business Overview</span>
+            <span style={{ fontSize:11, fontWeight:600, color:C.textMuted, background:'rgba(255,255,255,0.05)', padding:'3px 10px', borderRadius:20, border:'1px solid rgba(255,255,255,0.08)' }}>
+              v6.0 Operational
+            </span>
+          </div>
         </div>
-        <button style={S.btn('primary')} onClick={onNewBill}>➕ Create New Bill</button>
+        <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+          <button style={{ ...S.btn('gold'), padding:'10px 18px', fontSize:12, fontWeight:700, display:'flex', alignItems:'center', gap:6 }} onClick={onShowMonthEnd} className="btn-hover">
+            📅 Month-End Closing & Audit
+          </button>
+          <button style={S.btn('primary')} onClick={onNewBill} className="btn-hover">➕ Create New Bill</button>
+        </div>
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))', gap:14, marginBottom:28 }}>
-        {stats.map(([v,c,l]) => (
-          <div key={l} style={S.card(c)}>
-            <div style={{ fontSize:10, letterSpacing:2, textTransform:'uppercase', color:C.textMuted, marginBottom:6 }}>{l}</div>
-            <div style={{ fontSize:22, fontWeight:800, color:c }}>{v}</div>
+      {/* Animated Key Metric Cards */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))', gap:14, marginBottom:22, position:'relative', zIndex:1 }}>
+        {stats.map((st, i) => (
+          <div
+            key={st.label}
+            className="stat-card-animated"
+            style={{
+              ...S.card(st.color),
+              animation: 'slideUpFade 0.45s cubic-bezier(0.16, 1, 0.3, 1) both',
+              animationDelay: `${i * 0.07}s`,
+              '--card-accent-glow': `${st.color}33`,
+              '--card-accent-border': `${st.color}88`,
+              cursor: 'default'
+            }}
+          >
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+              <span style={{ fontSize:10, letterSpacing:2, textTransform:'uppercase', color:C.textMuted, fontWeight:600 }}>{st.label}</span>
+              <span style={{ fontSize:16 }}>{st.icon}</span>
+            </div>
+            <div style={{ fontSize:22, fontWeight:800, color:st.color, marginBottom:4 }}>
+              {st.isRatio ? (
+                <span>
+                  <AnimatedCounter value={st.num} />
+                  <span style={{ fontSize:15, color:C.textMuted, fontWeight:600 }}> / {st.den}</span>
+                </span>
+              ) : (
+                <AnimatedCounter value={st.value} isCurrency={st.isCurr} />
+              )}
+            </div>
+            <div style={{ fontSize:11, color:C.textMuted, display:'flex', alignItems:'center', gap:4 }}>
+              <span>{st.sub}</span>
+            </div>
           </div>
         ))}
+      </div>
+
+      {/* Real-Time Collection Velocity Bar */}
+      <div style={{
+        ...S.section,
+        marginBottom: 24,
+        padding: '18px 22px',
+        background: 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(15,15,26,0.6) 100%)',
+        border: '1px solid rgba(255,210,80,0.18)',
+        boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
+        position: 'relative',
+        zIndex: 1
+      }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12, flexWrap:'wrap', gap:8 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <span style={{ fontSize:18 }}>📊</span>
+            <div>
+              <div style={{ fontSize:11, letterSpacing:2, textTransform:'uppercase', color:C.gold, fontWeight:700 }}>
+                Cash Flow & Collection Health
+              </div>
+              <div style={{ fontSize:11.5, color:C.textMuted }}>
+                Live settlement velocity across Karur yarn parties
+              </div>
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:16, alignItems:'center' }}>
+            <div style={{ fontSize:12.5, fontWeight:700, color:C.green, display:'flex', alignItems:'center', gap:6 }}>
+              <span style={{ width:8, height:8, borderRadius:'50%', background:C.green, display:'inline-block' }}></span>
+              Collected: <AnimatedCounter value={totalPaid} isCurrency={true} /> ({collectionRate}%)
+            </div>
+            <div style={{ fontSize:12.5, fontWeight:700, color:C.red, display:'flex', alignItems:'center', gap:6 }}>
+              <span style={{ width:8, height:8, borderRadius:'50%', background:C.red, display:'inline-block' }}></span>
+              Pending: <AnimatedCounter value={pendingAmt} isCurrency={true} /> ({pendingRate}%)
+            </div>
+          </div>
+        </div>
+
+        {/* Multi-segment progress bar */}
+        <div style={{
+          height: 10,
+          borderRadius: 5,
+          background: 'rgba(255,255,255,0.08)',
+          overflow: 'hidden',
+          display: 'flex',
+          boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.6)'
+        }}>
+          {totalAmt > 0 ? (
+            <>
+              <div style={{
+                width: `${collectionRate}%`,
+                background: 'linear-gradient(90deg, #27ae60, #4ed97a)',
+                transition: 'width 1.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                boxShadow: '0 0 10px rgba(78, 217, 122, 0.5)'
+              }} />
+              <div style={{
+                width: `${pendingRate}%`,
+                background: 'linear-gradient(90deg, #c0392b, #ff6b6b)',
+                transition: 'width 1.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                boxShadow: '0 0 10px rgba(255, 107, 107, 0.5)'
+              }} />
+            </>
+          ) : (
+            <div style={{ width: '100%', background: 'rgba(255,255,255,0.05)' }} />
+          )}
+        </div>
       </div>
 
       {/* Monthly GST Tax Filing Radar */}
       <MonthlyGSTRadar bills={bills} company={company} />
 
-      <div style={S.section}>
+      {/* Recent Invoices */}
+      <div style={{ ...S.section, position:'relative', zIndex:1 }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
           <div style={S.secTitle}>Recent Invoices</div>
         </div>
@@ -2136,22 +2835,29 @@ function Dashboard({ bills, onNewBill, onShowLedger, customers, company }) {
             {[...bills].sort((a,b)=>Number(b.billNo)-Number(a.billNo)).slice(0,8).map(b => {
               const fin = getBillFinancials(b);
               const cust = customers.find(c=>c.name===b.customer);
+              const isPending = fin.computedStatus === 'pending';
               return (
-                <tr key={b.id}>
+                <tr key={b.id} className="invoice-row-hover">
                   <td style={{ ...S.td, color:C.gold, fontWeight:800 }}>#{b.billNo}</td>
                   <td style={{ ...S.td, color:C.textMuted, fontSize:12 }}>{b.date}</td>
                   <td style={{ ...S.td, fontWeight:600 }}>{b.customer}</td>
                   <td style={{ ...S.td, fontWeight:800 }}>{fmtINR(b.netAmount)}</td>
                   <td style={S.td}>
-                    <span style={S.badge(fin.computedStatus==='paid'?'green':fin.computedStatus==='partial'?'orange':'danger')}>
+                    <span
+                      className={isPending ? 'pulse-badge-pending' : ''}
+                      style={S.badge(fin.computedStatus==='paid'?'green':fin.computedStatus==='partial'?'orange':'danger')}
+                    >
                       {fin.computedStatus==='paid'?'✓ Paid':fin.computedStatus==='partial'?'● Partial':'● Pending'}
                     </span>
                   </td>
                   <td style={S.td}>
                     <div style={{ display:'flex', gap:6 }}>
-                      <button style={{ ...S.btn('blue'), padding:'4px 8px', fontSize:10 }} onClick={()=>api.printBill(generateBillHTML(b, company))}>🖨 Print</button>
+                      <button style={{ ...S.btn('blue'), padding:'4px 8px', fontSize:10 }} onClick={()=>api.printBill(generateBillHTML(b, company))} className="btn-hover">🖨 Print</button>
                       {cust && (
-                        <button style={{ ...S.btn(), padding:'4px 8px', fontSize:10 }} onClick={()=>onShowLedger(cust)}>👤 Ledger</button>
+                        <button style={{ ...S.btn(), padding:'4px 8px', fontSize:10 }} onClick={()=>onShowLedger(cust)} className="btn-hover">👤 Ledger</button>
+                      )}
+                      {onDeleteBill && (
+                        <button style={{ ...S.btn('danger'), padding:'4px 8px', fontSize:10 }} onClick={()=>onDeleteBill(b.id)} className="btn-hover" title="Delete Bill">✕</button>
                       )}
                     </div>
                   </td>
@@ -2421,6 +3127,109 @@ function SettingsPage({ countMap, setCountMap, driveConnected, onDriveConnect, o
           <div><label style={S.label}>IFSC Code</label><input style={S.input} value={compEdit.ifsc} onChange={e=>setCompEdit({...compEdit, ifsc:e.target.value})} /></div>
           <div><label style={S.label}>Jurisdiction City</label><input style={S.input} value={compEdit.jurisdiction} onChange={e=>setCompEdit({...compEdit, jurisdiction:e.target.value})} /></div>
         </div>
+
+        {/* Authorised Signature Customizer & Style Picker */}
+        <div style={{ marginTop: 14, marginBottom: 18, padding: '18px 22px', background: 'rgba(255,255,255,0.03)', borderRadius: 14, border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+            <div>
+              <label style={{ ...S.label, margin: 0, fontSize: 13, fontWeight: 800, color: C.gold }}>
+                ✍️ Authorised Signature Samples for "Mukil"
+              </label>
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                Select your favorite signature style below or upload your custom signature image.
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/svg+xml"
+                id="sig-upload-input"
+                style={{ display: 'none' }}
+                onChange={e => {
+                  const file = e.target.files[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = ev => {
+                    setCompEdit({ ...compEdit, signatureImage: ev.target.result });
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+              <button
+                type="button"
+                style={{ ...S.btn('primary'), padding: '7px 14px', fontSize: 11, cursor: 'pointer' }}
+                onClick={() => document.getElementById('sig-upload-input').click()}
+              >
+                📁 Upload Custom Image
+              </button>
+              {compEdit.signatureImage && (
+                <button
+                  type="button"
+                  style={{ ...S.btn('danger'), padding: '7px 12px', fontSize: 11, cursor: 'pointer' }}
+                  onClick={() => setCompEdit({ ...compEdit, signatureImage: null })}
+                >
+                  ✕ Clear Image
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Active Preview Banner if Custom Image is active */}
+          {compEdit.signatureImage && (
+            <div style={{ marginBottom: 16, padding: '12px 16px', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div style={{ background: '#fff', padding: '6px 14px', borderRadius: 8, minWidth: 140, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <img src={compEdit.signatureImage} alt="Custom Signature Preview" style={{ maxHeight: 42, maxWidth: 140, objectFit: 'contain' }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#93c5fd' }}>Custom Signature Image Active</div>
+                <div style={{ fontSize: 10.5, color: C.textMuted }}>This custom uploaded image is currently active for all bills.</div>
+              </div>
+            </div>
+          )}
+
+          {/* 5 Preset Styles Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+            {Object.values(SIGNATURE_STYLES).map(st => {
+              const isSelected = !compEdit.signatureImage && (compEdit.signatureStyle === st.id || (!compEdit.signatureStyle && st.id === 'style1'));
+              return (
+                <div
+                  key={st.id}
+                  onClick={() => setCompEdit({ ...compEdit, signatureStyle: st.id, signatureImage: null })}
+                  style={{
+                    background: isSelected ? 'linear-gradient(135deg, rgba(37,99,235,0.2) 0%, rgba(16,185,129,0.15) 100%)' : 'rgba(15,23,42,0.6)',
+                    border: isSelected ? '2px solid #10b981' : '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 12,
+                    padding: '12px 14px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: isSelected ? '0 0 16px rgba(16,185,129,0.25)' : 'none',
+                    position: 'relative'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 800, color: isSelected ? '#34d399' : '#fff' }}>{st.name}</div>
+                    {isSelected && (
+                      <span style={{ fontSize: 9.5, background: '#10b981', color: '#000', fontWeight: 800, padding: '1px 6px', borderRadius: 10 }}>
+                        ACTIVE
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 8 }}>{st.subtitle}</div>
+                  <div
+                    style={{ background: '#fff', borderRadius: 8, padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 52 }}
+                    dangerouslySetInnerHTML={{ __html: st.svg }}
+                  />
+                  <div style={{ fontSize: 9.5, color: '#94a3b8', marginTop: 8 }}>{st.desc}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 14 }}>
+            Click any signature style card to select it, then click <b>"Save Company Profile"</b> below!
+          </div>
+        </div>
+
         <button style={S.btn('primary')} onClick={saveCompanyProfile}>💾 Save Company Profile</button>
       </div>
     </div>
@@ -2565,6 +3374,38 @@ function DriveAuthPage({ onConnected }) {
   const [loading, setLoading]   = useState(false);
   const fileRef = useRef(null);
 
+  const handleFastConnect = async () => {
+    setLoading(true);
+    setMsg('⟳ Opening browser for Google login... Please select your account and click Allow.');
+    try {
+      const res = await api.googleAuthStart();
+      if (res && res.success) {
+        setMsg('⟳ Waiting for browser authorization in Chrome/Edge...');
+        let count = 0;
+        const interval = setInterval(async () => {
+          count++;
+          const st = await api.googleAuthStatus();
+          if (st && st.connected) {
+            clearInterval(interval);
+            setMsg('✅ Connected! Google Drive is ready.');
+            setStep(3);
+            setTimeout(() => onConnected(), 1200);
+          }
+          if (count > 60) {
+            clearInterval(interval);
+            setLoading(false);
+          }
+        }, 2000);
+      } else {
+        setMsg(`❌ Error: ${res ? res.error : 'Failed to start auth'}`);
+        setLoading(false);
+      }
+    } catch (err) {
+      setMsg(`❌ Error: ${err.message}`);
+      setLoading(false);
+    }
+  };
+
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -2575,14 +3416,29 @@ function DriveAuthPage({ onConnected }) {
       setLoading(true);
       const res = await api.googleAuthStart(json);
       if (res.success) {
-        setMsg('✅ Browser opened for Google login. Login and paste the auth code here.');
+        setMsg('✅ Browser opened for Google login. Login and approve.');
         setStep(2);
+        let count = 0;
+        const interval = setInterval(async () => {
+          count++;
+          const st = await api.googleAuthStatus();
+          if (st && st.connected) {
+            clearInterval(interval);
+            setMsg('✅ Connected! Google Drive is ready.');
+            setStep(3);
+            setTimeout(() => onConnected(), 1200);
+          }
+          if (count > 60) {
+            clearInterval(interval);
+            setLoading(false);
+          }
+        }, 2000);
       } else {
         setMsg(`❌ Error: ${res.error}`);
+        setLoading(false);
       }
     } catch (err) {
       setMsg(`❌ JSON parse error: ${err.message}`);
-    } finally {
       setLoading(false);
     }
   };
@@ -2612,14 +3468,25 @@ function DriveAuthPage({ onConnected }) {
         <div style={{ fontSize:36, marginBottom:12, textAlign:'center' }}>☁</div>
         <div style={{ fontSize:20, fontWeight:800, color:C.gold, textAlign:'center', marginBottom:8 }}>Connect Google Drive</div>
         <div style={{ fontSize:12, color:C.textMuted, textAlign:'center', marginBottom:26 }}>
-          One-time authentication to automatically sync your PDF bills to Google Drive.
+          One-time authentication to automatically sync your PDF bills to Mukil's Master Google Drive Vault.
         </div>
 
+        {/* 1-Click Fast Connect */}
+        <div style={{ background:'rgba(52,168,83,0.1)', border:'1.5px solid rgba(52,168,83,0.4)', borderRadius:12, padding:18, marginBottom:20, textAlign:'center' }}>
+          <div style={{ fontSize:15, fontWeight:800, color:C.green, marginBottom:6 }}>⚡ 1-Click Fast Connect</div>
+          <div style={{ fontSize:12, color:C.textMuted, marginBottom:14 }}>Uses Mukil's pre-configured SGC Billing OAuth client directly. Opens browser automatically.</div>
+          <button style={{ ...S.btn('drive'), padding:'10px 24px', fontSize:13, fontWeight:700 }} onClick={handleFastConnect} disabled={loading}>
+            {loading ? '⟳ Connecting in Browser...' : '🚀 Connect Google Drive Now'}
+          </button>
+        </div>
+
+        <div style={{ textAlign:'center', fontSize:11, color:C.textMuted, marginBottom:16 }}>— OR MANUAL CONFIGURATION —</div>
+
         <div style={{ background: step===1?'rgba(255,200,74,0.08)':'rgba(255,255,255,0.02)', border:`1px solid ${step===1?C.gold+'44':'rgba(255,255,255,0.08)'}`, borderRadius:10, padding:16, marginBottom:14 }}>
-          <div style={{ fontSize:11, color:step===1?C.gold:C.textMuted, fontWeight:700, letterSpacing:1.5, marginBottom:8 }}>STEP 1 — Upload client_secret.json</div>
+          <div style={{ fontSize:11, color:step===1?C.gold:C.textMuted, fontWeight:700, letterSpacing:1.5, marginBottom:8 }}>CUSTOM — Upload client_secret.json</div>
           {step === 1 ? (
             <>
-              <p style={{ fontSize:12, color:C.textMuted, marginBottom:12 }}>Select your downloaded <b style={{ color:C.text }}>client_secret_*.json</b> file from Google Cloud Console.</p>
+              <p style={{ fontSize:12, color:C.textMuted, marginBottom:12 }}>Select a custom <b style={{ color:C.text }}>client_secret_*.json</b> file from Google Cloud Console.</p>
               <input ref={fileRef} type="file" accept=".json" style={{ display:'none' }} onChange={handleFileUpload} />
               <button style={S.btn('primary')} onClick={()=>fileRef.current.click()} disabled={loading}>
                 {loading ? '⟳ Processing...' : '📂 Choose JSON Secret'}
@@ -2630,20 +3497,16 @@ function DriveAuthPage({ onConnected }) {
           )}
         </div>
 
-        <div style={{ background: step===2?'rgba(255,200,74,0.08)':'rgba(255,255,255,0.02)', border:`1px solid ${step===2?C.gold+'44':'rgba(255,255,255,0.08)'}`, borderRadius:10, padding:16, marginBottom:14 }}>
-          <div style={{ fontSize:11, color:step>=2?C.gold:C.textMuted, fontWeight:700, letterSpacing:1.5, marginBottom:8 }}>STEP 2 — Enter Verification Code</div>
-          {step === 2 && (
-            <>
-              <p style={{ fontSize:12, color:C.textMuted, marginBottom:12 }}>Authorize in the browser window and paste the code below:</p>
-              <input style={{ ...S.input, marginBottom:10 }} value={authCode} onChange={e=>setAuthCode(e.target.value)} placeholder="4/0AX4XfWi..." />
-              <button style={S.btn('success')} onClick={handleCodeSubmit} disabled={loading}>
-                {loading ? '⟳ Verifying...' : '✓ Complete Drive Connection'}
-              </button>
-            </>
-          )}
-          {step > 2 && <div style={{ color:C.green, fontSize:12 }}>✅ Auth code verified</div>}
-          {step < 2 && <div style={{ color:C.textMuted, fontSize:12 }}>— Waiting for Step 1</div>}
-        </div>
+        {step === 2 && (
+          <div style={{ background: 'rgba(255,200,74,0.08)', border:`1px solid ${C.gold+'44'}`, borderRadius:10, padding:16, marginBottom:14 }}>
+            <div style={{ fontSize:11, color:C.gold, fontWeight:700, letterSpacing:1.5, marginBottom:8 }}>STEP 2 — Enter Verification Code (if loopback didn't catch)</div>
+            <p style={{ fontSize:12, color:C.textMuted, marginBottom:12 }}>If browser provided a manual code, paste below:</p>
+            <input style={{ ...S.input, marginBottom:10 }} value={authCode} onChange={e=>setAuthCode(e.target.value)} placeholder="4/0AX4XfWi..." />
+            <button style={S.btn('success')} onClick={handleCodeSubmit} disabled={loading}>
+              {loading ? '⟳ Verifying...' : '✓ Complete Drive Connection'}
+            </button>
+          </div>
+        )}
 
         {msg && (
           <div style={{ marginTop:14, padding:'10px 14px', background:'rgba(255,255,255,0.05)', borderRadius:8, fontSize:12, color:msg.startsWith('✅')?C.green:C.red }}>
@@ -2667,7 +3530,10 @@ function App() {
   const [editBill, setEditBill]     = useState(null);
   const [ledgerCustomer, setLedger] = useState(null);
   const [loaded, setLoaded]         = useState(false);
+  const [videoDone, setVideoDone]   = useState(false);
+  const [videoProgress, setVideoProgress] = useState(0);
   const [syncingAll, setSyncingAll] = useState(false);
+  const [showMonthEnd, setShowMonthEnd] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -2683,8 +3549,15 @@ function App() {
       if (comp) setCompany(comp);
       const { connected } = await api.googleAuthStatus();
       setDrive(connected);
+      if (connected && api.ensureMonthFolder) {
+        api.ensureMonthFolder().catch(() => {});
+      }
       setLoaded(true);
     })();
+
+    if (api.onBillsUpdated) {
+      api.onBillsUpdated((newBills) => setBills(newBills));
+    }
   }, []);
 
   const saveBill = async (bill) => {
@@ -2694,6 +3567,26 @@ function App() {
       api.storeSet('sgc-bills', updated);
       return updated;
     });
+  };
+
+  const handleDeleteBill = async (id) => {
+    const billToDelete = bills.find(b => b.id === id);
+    if (!billToDelete) return;
+    if (!confirm(`Are you sure you want to delete Bill #${billToDelete.billNo} (${billToDelete.customer})?\n\nThis will also permanently delete the PDF file from Google Drive vaults.`)) return;
+
+    // 1. Remove from Drive in background if connected
+    if (driveConnected && (billToDelete.driveFileId || billToDelete.vaultFiles || billToDelete.billNo)) {
+      try {
+        await api.deleteBillFromDrive({ billData: billToDelete });
+      } catch (err) {
+        console.warn('Failed to delete bill from drive:', err);
+      }
+    }
+
+    // 2. Remove from local bills list
+    const u = bills.filter(b => b.id !== id);
+    setBills(u);
+    await api.storeSet('sgc-bills', u);
   };
 
   const handleEditBill = (bill) => {
@@ -2749,12 +3642,46 @@ function App() {
     }
   };
 
-  if (!loaded) {
+  if (!loaded || !videoDone) {
     return (
-      <div style={{ ...S.app, display:'flex', alignItems:'center', justifyContent:'center', minHeight:'100vh' }}>
-        <div style={{ textAlign:'center' }}>
-          <div style={{ fontSize:36, marginBottom:14, animation:'spin 1s linear infinite', display:'inline-block' }}>⟳</div>
-          <div style={{ color:C.gold, fontSize:13, letterSpacing:3, fontWeight:700 }}>LOADING SGC BILLING...</div>
+      <div style={{ position:'fixed', inset:0, background:'#06070d', zIndex:9999, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20 }}>
+        <div style={{ position:'relative', width:'100%', maxWidth:760, borderRadius:16, overflow:'hidden', boxShadow:'0 0 60px rgba(0,210,255,0.2), 0 20px 60px rgba(0,0,0,0.9)', border:'1px solid rgba(255,200,74,0.3)', background:'#000' }}>
+          <video
+            src="loading_video.mp4"
+            autoPlay
+            muted
+            playsInline
+            onTimeUpdate={(e) => {
+              if (e.target.duration) {
+                setVideoProgress((e.target.currentTime / e.target.duration) * 100);
+              }
+            }}
+            onEnded={() => setVideoDone(true)}
+            onError={() => setVideoDone(true)}
+            style={{ width:'100%', height:'auto', display:'block', maxHeight:'75vh', objectFit:'contain' }}
+          />
+          {/* Top Bar with Brand and Skip */}
+          <div style={{ position:'absolute', top:12, left:16, right:16, display:'flex', justifyContent:'space-between', alignItems:'center', zIndex:10 }}>
+            <div style={{ fontSize:11, letterSpacing:2.5, fontWeight:800, color:'#38bdf8', textShadow:'0 2px 8px rgba(0,0,0,0.8)', display:'flex', alignItems:'center', gap:6, background:'rgba(11,15,25,0.8)', padding:'4px 12px', borderRadius:20, border:'1px solid rgba(255,255,255,0.1)' }}>
+              <span style={{ animation:'spin 2s linear infinite', display:'inline-block' }}>⚡</span> SRI GANAPATHI COLOURS
+            </div>
+            <button
+              onClick={() => setVideoDone(true)}
+              style={{ background:'rgba(11,15,25,0.8)', border:'1px solid rgba(255,255,255,0.2)', color:'#fff', padding:'5px 14px', borderRadius:20, fontSize:11, cursor:'pointer', fontWeight:600, backdropFilter:'blur(4px)', transition:'all 0.2s' }}
+              onMouseEnter={e=>e.currentTarget.style.background='rgba(37,99,235,0.6)'}
+              onMouseLeave={e=>e.currentTarget.style.background='rgba(11,15,25,0.8)'}
+            >
+              Skip Intro ➔
+            </button>
+          </div>
+          {/* Bottom Progress Line */}
+          <div style={{ position:'absolute', bottom:0, left:0, right:0, height:3, background:'rgba(255,255,255,0.08)' }}>
+            <div style={{ height:'100%', width:`${videoProgress}%`, background:'linear-gradient(90deg, #2563eb, #38bdf8)', transition:'width 0.1s linear' }} />
+          </div>
+        </div>
+        <div style={{ marginTop:16, fontSize:11, letterSpacing:2.5, color:'#94a3b8', fontWeight:700, display:'flex', alignItems:'center', gap:8 }}>
+          <span>INITIALIZING SGC BILLING SYSTEM</span>
+          <span style={{ fontSize:10, color:'#38bdf8' }}>({Math.round(videoProgress)}%)</span>
         </div>
       </div>
     );
@@ -2796,9 +3723,9 @@ function App() {
       </nav>
 
       <main style={S.main}>
-        {tab==='dashboard'  && <Dashboard bills={bills} onNewBill={()=>{ setEditBill(null); setTab('new'); }} onShowLedger={c=>setLedger(c)} customers={customers} company={company} />}
+        {tab==='dashboard'  && <Dashboard bills={bills} onNewBill={()=>{ setEditBill(null); setTab('new'); }} onShowLedger={c=>setLedger(c)} customers={customers} company={company} onDeleteBill={handleDeleteBill} onShowMonthEnd={()=>setShowMonthEnd(true)} />}
         {tab==='new'        && <NewBillForm customers={customers} bills={bills} countMap={countMap} onSave={saveBill} editBill={editBill} onCancelEdit={()=>{ setEditBill(null); setTab('bills'); }} driveConnected={driveConnected} company={company} />}
-        {tab==='bills'      && <BillsList bills={bills} setBills={setBills} onEditBill={handleEditBill} onCloneBill={handleCloneBill} customers={customers} company={company} />}
+        {tab==='bills'      && <BillsList bills={bills} setBills={setBills} onEditBill={handleEditBill} onCloneBill={handleCloneBill} customers={customers} company={company} onDeleteBill={handleDeleteBill} />}
         {tab==='customers'  && <CustomersPage customers={customers} bills={bills} setCustomers={setCustomers} onShowLedger={c=>setLedger(c)} />}
         {tab==='analytics'  && <AnalyticsPage bills={bills} customers={customers} />}
         {tab==='settings'   && <SettingsPage countMap={countMap} setCountMap={setCountMap} driveConnected={driveConnected} onDriveConnect={handleDriveConnect} onDriveDisconnect={handleDriveDisconnect} folderId={folderId} setFolderId={setFolderId} company={company} setCompany={setCompany} bills={bills} setBills={setBills} customers={customers} setCustomers={setCustomers} syncingAll={syncingAll} syncAllBills={syncAllBills} />}
@@ -2808,6 +3735,9 @@ function App() {
 
       {ledgerCustomer && (
         <CustomerLedgerModal customer={ledgerCustomer} bills={bills} onClose={()=>setLedger(null)} onEditBill={handleEditBill} company={company} />
+      )}
+      {showMonthEnd && (
+        <MonthEndModal bills={bills} company={company} onClose={()=>setShowMonthEnd(false)} />
       )}
     </div>
   );
