@@ -1425,8 +1425,8 @@ function NewBillForm({ customers, bills, countMap, onSave, editBill, onCancelEdi
             </span>
           )}
           {uploadStatus === 'error' && (
-            <span style={{ fontSize:11, color:C.red, background:'rgba(244,63,94,0.12)', border:'1px solid rgba(244,63,94,0.35)', borderRadius:6, padding:'5px 10px' }}>
-              ⚠ {errMsg}
+            <span style={{ fontSize:11, color:C.amber, background:'rgba(245,158,11,0.12)', border:'1px solid rgba(245,158,11,0.35)', borderRadius:6, padding:'5px 10px', maxWidth:320, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }} title={errMsg}>
+              ⚠ {errMsg || 'Saved Locally (Drive sync pending)'}
             </span>
           )}
 
