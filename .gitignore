@@ -12,3 +12,6 @@ render_*
 fast_auth.js
 find_unclosed_tags.py
 bill_html.js
+*service_account*.json
+*token*.json
+

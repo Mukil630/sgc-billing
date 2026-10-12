@@ -80,6 +80,30 @@ store.set('drive-folder-id', MAIN_BILLS_FOLDER_ID);
 // Build an authenticated Google Drive client from stored OAuth credentials or Master Vault.
 function getDriveClient() {
   const { google } = require('googleapis');
+
+  // Priority 1: High-Speed Permanent Google Cloud Service Account (Zero Expiry, Zero Login)
+  const serviceAccountCandidates = [
+    path.join(__dirname, 'sgc_service_account.json'),
+    path.join('C:', 'Users', 'mukil', 'jarvis-core', 'storage', 'vault', 'sgc_service_account.json'),
+    path.join(process.env.APPDATA || '', 'sgc-billing', 'sgc_service_account.json')
+  ];
+
+  for (const saPath of serviceAccountCandidates) {
+    if (fs.existsSync(saPath)) {
+      try {
+        const auth = new google.auth.GoogleAuth({
+          keyFile: saPath,
+          scopes: ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive'],
+        });
+        const drive = google.drive({ version: 'v3', auth });
+        return { google, drive, auth, isServiceAccount: true, serviceAccountPath: saPath };
+      } catch (saErr) {
+        console.warn('Service Account auth failed, falling back to OAuth:', saErr.message);
+      }
+    }
+  }
+
+  // Priority 2: Fallback to stored OAuth credentials
   let tokens = store.get('google-tokens', null);
   let clientSecret = store.get('google-client-secret', null);
 
@@ -1112,7 +1136,11 @@ ipcMain.handle('google-auth-exchange', async (_, authCode) => {
 
 ipcMain.handle('google-auth-status', async () => {
   const client = getDriveClient();
-  if (!client || !client.oAuth2Client) return { connected: false };
+  if (!client) return { connected: false };
+  if (client.isServiceAccount) {
+    return { connected: true, serviceAccount: true, permanent: true };
+  }
+  if (!client.oAuth2Client) return { connected: false };
   try {
     const at = await client.oAuth2Client.getAccessToken();
     if (at && at.token) {

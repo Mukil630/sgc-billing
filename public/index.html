@@ -3574,10 +3574,15 @@ function App() {
     if (!billToDelete) return;
     if (!confirm(`Are you sure you want to delete Bill #${billToDelete.billNo} (${billToDelete.customer})?\n\nThis will also permanently delete the PDF file from Google Drive vaults.`)) return;
 
-    // 1. Remove from Drive in background if connected
-    if (driveConnected && (billToDelete.driveFileId || billToDelete.vaultFiles || billToDelete.billNo)) {
+    // 1. Remove from Drive vaults unconditionally across all file IDs and bill numbers
+    if (billToDelete.driveFileId || billToDelete.vaultFiles || billToDelete.billNo) {
       try {
-        await api.deleteBillFromDrive({ billData: billToDelete });
+        const driveDelRes = await api.deleteBillFromDrive({ billData: billToDelete });
+        if (driveDelRes && driveDelRes.success) {
+          console.log(`[DRIVE] Successfully deleted Bill #${billToDelete.billNo} from Drive vaults:`, driveDelRes.deleted);
+        } else {
+          console.warn(`[DRIVE] Drive delete response:`, driveDelRes);
+        }
       } catch (err) {
         console.warn('Failed to delete bill from drive:', err);
       }
