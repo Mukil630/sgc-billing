@@ -3721,8 +3721,22 @@ function App() {
             title="Open Mukil's Master Main Bills Drive Vault">
             📁 Main Drive Bills ↗
           </button>
-          <span style={S.badge(driveConnected?'drive':'orange')}>
-            {driveConnected ? '☁ Drive Connected' : '⚠ Drive Offline'}
+          <span
+            style={{
+              ...S.badge(driveConnected?'drive':'orange'),
+              cursor: driveConnected ? 'default' : 'pointer',
+              border: driveConnected ? '1px solid rgba(52,168,83,0.3)' : '1px solid rgba(255,107,107,0.7)',
+              background: driveConnected ? 'rgba(52,168,83,0.15)' : 'rgba(255,107,107,0.25)',
+              padding: '4px 10px',
+              borderRadius: 6,
+              transition: 'all 0.2s ease'
+            }}
+            onClick={() => {
+              if (!driveConnected) setTab('drive-auth');
+            }}
+            title={driveConnected ? "Google Drive Connected — Automatic PDF upload is active" : "⚠ Drive Offline! Click here to Reconnect with 1-Click"}
+          >
+            {driveConnected ? '☁ Drive Connected' : '⚠ Drive Offline (Click to Fix ↗)'}
           </span>
         </div>
       </nav>
